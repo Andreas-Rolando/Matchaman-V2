@@ -1,52 +1,197 @@
-import React, { useState } from 'react';
-import { User, CreditCard, Wallet, Banknote, Utensils, ArrowRight, Loader2, ShieldCheck } from 'lucide-react';
-import { Branch, SalesMode, CartItem, VoucherDeal, CustomerInfo, PaymentMethod, Order } from '../types';
+import React, { useState, useEffect } from 'react';
+import { User, CreditCard, Wallet, Banknote, Smartphone, ArrowRight, Loader2, ShieldCheck, QrCode, AlertCircle } from 'lucide-react';
+import { Branch, BranchPaymentInfo, SalesMode, CartItem, VoucherDeal, CustomerInfo, PaymentMethod, Order, OrderMode, CalculatedTotal } from '../types';
 
 interface CheckoutScreenProps {
   branch: Branch;
   salesMode: SalesMode;
   cartItems: CartItem[];
   appliedVoucher: VoucherDeal | null;
+  paymentInfo: BranchPaymentInfo | null;
+  orderModes: OrderMode[];
   onOrderPlaced: (order: Order) => void;
   onBackToCart: () => void;
 }
+
+function buildSalesMenus(cartItems: CartItem[]): any[] {
+  return cartItems.map((ci) => {
+    const salesMenu: any = {
+      ID: Date.now() + Math.floor(Math.random() * 1000),
+      menuID: parseInt(ci.menuItem.id, 10),
+      qty: ci.quantity,
+      extras: [],
+      packages: [],
+      notes: ci.specialNotes || '',
+    };
+
+    for (const mod of ci.selectedModifiers) {
+      const isExtra = mod.groupId.startsWith('ext_');
+      const isPackage = mod.groupId.startsWith('pkg_');
+
+      if (isExtra) {
+        salesMenu.extras.push({
+          menuExtraID: parseInt(String(mod.optionId), 10),
+          qty: 1,
+        });
+      } else if (isPackage) {
+        const parts = mod.groupId.split('_');
+        const menuGroupID = parseInt(parts[parts.length - 1], 10);
+        salesMenu.packages.push({
+          menuID: parseInt(String(mod.optionId), 10),
+          qty: 1,
+          menuGroupID,
+        });
+      }
+    }
+
+    return salesMenu;
+  });
+}
+
+function mapSalesModeToOrderType(salesMode: SalesMode): string {
+  switch (salesMode) {
+    case 'dine_in': return 'dineIn';
+    case 'takeaway': return 'takeAway';
+    case 'delivery': return 'delivery';
+    default: return salesMode;
+  }
+}
+
+const getPaymentIcon = (id: string) => {
+  const lower = id.toLowerCase();
+  if (lower.includes('qris') || lower.includes('qr')) return QrCode;
+  if (lower.includes('ovo') || lower.includes('gopay') || lower.includes('dana') || lower.includes('shopee') || lower.includes('linkaja')) return Smartphone;
+  if (lower.includes('va') || lower.includes('transfer') || lower.includes('bca') || lower.includes('bni') || lower.includes('bri') || lower.includes('mandiri')) return CreditCard;
+  return Wallet;
+};
 
 export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
   branch,
   salesMode,
   cartItems,
   appliedVoucher,
+  paymentInfo,
+  orderModes,
   onOrderPlaced,
+  onBackToCart,
 }) => {
   const [customer, setCustomer] = useState<CustomerInfo>({
     fullName: 'Andreas Rolando',
     email: 'andreas.rolando@esb.co.id',
     phone: '08123456789',
     tableNumber: salesMode === 'dine_in' ? '12' : '',
-    address: salesMode === 'takeaway' ? 'Pickup at ' + branch.name : '',
+    address: salesMode === 'delivery' ? 'Jl. Sudirman No. 1, Jakarta' : '',
   });
 
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('ewallet');
+  const [selectedPaymentId, setSelectedPaymentId] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [calculatedTotal, setCalculatedTotal] = useState<CalculatedTotal | null>(null);
+  const [isCalculating, setIsCalculating] = useState(true);
+  const [calculateError, setCalculateError] = useState('');
 
-  const subtotal = cartItems.reduce((sum, item) => sum + item.totalPrice, 0);
-  const deliveryFee = salesMode === 'takeaway' ? 0.00 : 2.99;
-  const serviceFee = 2.00;
+  const orderType = mapSalesModeToOrderType(salesMode);
+  const isDelivery = salesMode === 'delivery';
+  const isDineIn = salesMode === 'dine_in';
 
-  let discount = 0;
-  if (appliedVoucher) {
-    if (appliedVoucher.discountType === 'free_delivery') {
-      discount = deliveryFee;
-    } else if (appliedVoucher.discountType === 'percentage') {
-      discount = (subtotal * appliedVoucher.discountValue) / 100;
-    } else if (appliedVoucher.discountType === 'fixed') {
-      discount = appliedVoucher.discountValue;
+  const visitPurposeID = orderModes.find((m) => m.type === orderType)?.visitPurposeID
+    || orderModes[0]?.visitPurposeID
+    || '';
+
+  useEffect(() => {
+    if (cartItems.length === 0) return;
+
+    async function calculateTotal() {
+      setIsCalculating(true);
+      setCalculateError('');
+      try {
+        const salesMenus = buildSalesMenus(cartItems);
+        const payload: Record<string, any> = {
+          branchCode: branch.id,
+          visitPurposeID,
+          orderType,
+          salesMenus,
+          userToken: '',
+        };
+
+        if (isDelivery) {
+          payload.latitude = branch.lat || -6.2088;
+          payload.longitude = branch.lng || 106.8456;
+        }
+
+        const res = await fetch('/api/esb/calculate-total', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (data.success && data.data) {
+          setCalculatedTotal(data.data);
+        } else {
+          setCalculateError(data.error || 'Gagal menghitung total');
+        }
+      } catch (err: any) {
+        setCalculateError('Gagal menghubungi server: ' + err.message);
+      } finally {
+        setIsCalculating(false);
+      }
     }
-  }
 
-  const tax = subtotal * 0.08;
-  const grandTotal = Math.max(0, subtotal + deliveryFee + serviceFee + tax - discount);
+    calculateTotal();
+  }, [cartItems, branch.id, visitPurposeID, orderType, isDelivery]);
+
+  const subtotal = calculatedTotal?.subtotal ?? cartItems.reduce((sum, item) => sum + item.totalPrice, 0);
+  const deliveryFee = calculatedTotal?.deliveryCost ?? 0;
+  const tax = (calculatedTotal?.pb1 ?? 0) + (calculatedTotal?.additionalTax ?? 0);
+  const serviceFee = calculatedTotal?.orderFee ?? 0;
+  const grandTotal = calculatedTotal?.grandTotal ?? (subtotal + deliveryFee + tax + serviceFee);
+  const roundingTotal = calculatedTotal?.roundingTotal ?? 0;
+  const discountTotal = calculatedTotal?.discountTotal ?? 0;
+  const voucherDiscount = calculatedTotal?.voucherDiscountTotal ?? 0;
+
+  const buildPaymentMethods = () => {
+    const methods: { id: string; label: string; icon: any; description?: string }[] = [];
+
+    if (paymentInfo) {
+      if (paymentInfo.atCashier) {
+        methods.push({
+          id: 'cashier',
+          label: 'Bayar di Kasir',
+          icon: Banknote,
+          description: 'Pay at the cashier counter',
+        });
+      }
+
+      if (paymentInfo.online && paymentInfo.online.length > 0) {
+        for (const p of paymentInfo.online) {
+          methods.push({
+            id: p.id,
+            label: p.name,
+            icon: getPaymentIcon(p.id),
+            description: p.description,
+          });
+        }
+      }
+    }
+
+    if (methods.length === 0) {
+      methods.push(
+        { id: 'cashier', label: 'Bayar di Kasir', icon: Banknote, description: 'Pay at the cashier' },
+        { id: 'ewallet', label: 'E-Wallet', icon: Wallet, description: 'OVO, GoPay, DANA' },
+        { id: 'qris', label: 'QRIS', icon: QrCode, description: 'Scan QR to pay' },
+      );
+    }
+
+    return methods;
+  };
+
+  const paymentMethods = buildPaymentMethods();
+
+  useEffect(() => {
+    if (!selectedPaymentId && paymentMethods.length > 0) {
+      setSelectedPaymentId(paymentMethods[0].id);
+    }
+  }, [paymentMethods, selectedPaymentId]);
 
   const handleSubmitOrder = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,58 +200,69 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
       return;
     }
 
+    if (!calculatedTotal) {
+      setErrorMessage('Perhitungan total belum selesai. Silakan tunggu.');
+      return;
+    }
+
     setIsSubmitting(true);
     setErrorMessage('');
 
     try {
-      // Post to Express backend ESB ESO-QS endpoint
+      const salesMenus = buildSalesMenus(cartItems);
+      const amount = Math.max(0, grandTotal - roundingTotal);
+
+      const orderPayload: Record<string, any> = {
+        branchCode: branch.id,
+        orderType,
+        fullName: customer.fullName,
+        email: customer.email,
+        phoneNumber: customer.phone,
+        visitPurposeID,
+        salesMenus,
+        paymentMethodID: selectedPaymentId === 'cashier' ? 'qrisesb' : selectedPaymentId,
+        amount,
+      };
+
+      if (isDineIn && customer.tableNumber) {
+        orderPayload.tableName = customer.tableNumber;
+      }
+
+      if (isDelivery) {
+        orderPayload.deliveryAddress = customer.address || branch.address;
+        orderPayload.deliveryAddressInfo = 'Delivered to customer address';
+        orderPayload.latitude = branch.lat || -6.2088;
+        orderPayload.longitude = branch.lng || 106.8456;
+        orderPayload.deliveryCourierID = 1;
+      }
+
+      if (selectedPaymentId !== 'cashier') {
+        orderPayload.returnUrl = window.location.origin;
+      }
+
       const response = await fetch('/api/esb/order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          outlet_id: branch.id,
-          sales_mode: salesMode,
-          table_number: customer.tableNumber,
-          customer_name: customer.fullName,
-          customer_email: customer.email,
-          customer_phone: customer.phone,
-          payment_method: paymentMethod,
-          items: cartItems.map((ci) => ({
-            item_id: ci.menuItem.id,
-            item_name: ci.menuItem.name,
-            qty: ci.quantity,
-            price: ci.unitPrice,
-            total: ci.totalPrice,
-            modifiers: ci.selectedModifiers,
-          })),
-          voucher_code: appliedVoucher?.code,
-          subtotal,
-          delivery_fee: deliveryFee,
-          discount,
-          tax,
-          total: grandTotal,
-        }),
+        body: JSON.stringify(orderPayload),
       });
 
       const resData = await response.json();
 
       if (resData.success) {
         const createdOrder: Order = {
-          id: resData.data.order_id,
-          orderNumber: resData.data.order_number,
+          id: resData.data.orderID || resData.data.order_id,
+          orderNumber: resData.data.orderID || resData.data.order_id,
           branch,
           salesMode,
           items: cartItems,
           subtotal,
           deliveryFee,
-          serviceFee,
-          discount,
-          appliedVoucherCode: appliedVoucher?.code,
           tax,
           total: grandTotal,
+          roundingTotal,
           customerInfo: customer,
-          paymentMethod,
-          paymentStatus: 'Berhasil',
+          paymentMethod: selectedPaymentId,
+          paymentStatus: 'Pending',
           createdAt: new Date().toLocaleString('id-ID', {
             day: '2-digit',
             month: 'short',
@@ -114,12 +270,23 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
             hour: '2-digit',
             minute: '2-digit',
           }),
-          esbResponseRef: resData.data.esb_reference_no,
+          esbResponseRef: resData.data.redirect_url || resData.data.qr_string || '',
+          qrString: resData.data.qr_string || '',
+          branchCode: branch.id,
+          paymentMethodCode: selectedPaymentId,
         };
+
+        const redirectUrl = resData.data.redirect_url || resData.data.deep_link_url;
+
+        if (redirectUrl && selectedPaymentId !== 'cashier' && selectedPaymentId !== 'qrisesb') {
+          sessionStorage.setItem('pendingOrder', JSON.stringify(createdOrder));
+          window.location.href = redirectUrl;
+          return;
+        }
 
         onOrderPlaced(createdOrder);
       } else {
-        setErrorMessage(resData.message || 'Gagal mengirim order ke ESB engine.');
+        setErrorMessage(resData.error || resData.message || 'Gagal mengirim order ke ESB engine.');
       }
     } catch (err: any) {
       setErrorMessage('Koneksi terputus: ' + err.message);
@@ -143,7 +310,7 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
         <div className="relative z-10">
           <h2 className="font-serif text-2xl font-bold">Confirm Order</h2>
           <p className="text-xs text-white/90">
-            Review details and select payment method (ESB ESO-QS Engine)
+            {isDelivery ? 'Delivery Order' : isDineIn ? 'Dine-in Order' : 'Take Away Order'} - {branch.name}
           </p>
         </div>
       </section>
@@ -151,6 +318,13 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
       {errorMessage && (
         <div className="mb-4 rounded-xl bg-[#ffdad6] p-3 text-xs font-semibold text-[#93000a]">
           {errorMessage}
+        </div>
+      )}
+
+      {calculateError && (
+        <div className="mb-4 rounded-xl bg-[#fff3e0] p-3 text-xs font-semibold text-[#e65100] flex items-center gap-2">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>{calculateError}</span>
         </div>
       )}
 
@@ -202,26 +376,26 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
                 required
                 value={customer.phone}
                 onChange={(e) => setCustomer({ ...customer, phone: e.target.value })}
-                placeholder="+62 812 3456 789"
+                placeholder="0812 3456 789"
                 className="mt-1 h-11 w-full rounded-lg border border-[#c2c8bc] bg-white px-3 text-xs outline-none focus:border-[#34562e] focus:ring-1 focus:ring-[#34562e]"
               />
             </div>
 
             <div>
               <label className="block text-xs font-medium text-[#5d5f5b]">
-                {salesMode === 'dine_in' ? 'Table Number (Dine-in)' : 'Notes / Address'}
+                {isDineIn ? 'Table Number' : isDelivery ? 'Delivery Address' : 'Notes'}
               </label>
               <div className="relative mt-1">
-                <Utensils className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#5d5f5b]" />
+                <Banknote className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#5d5f5b]" />
                 <input
                   type="text"
-                  value={salesMode === 'dine_in' ? customer.tableNumber : customer.address}
+                  value={isDineIn ? customer.tableNumber : customer.address}
                   onChange={(e) =>
-                    salesMode === 'dine_in'
+                    isDineIn
                       ? setCustomer({ ...customer, tableNumber: e.target.value })
                       : setCustomer({ ...customer, address: e.target.value })
                   }
-                  placeholder={salesMode === 'dine_in' ? 'e.g. 12' : 'Pickup at counter'}
+                  placeholder={isDineIn ? 'e.g. 12' : isDelivery ? 'Enter delivery address' : 'Pickup at counter'}
                   className="h-11 w-full rounded-lg border border-[#c2c8bc] bg-white pl-9 pr-3 text-xs outline-none focus:border-[#34562e] focus:ring-1 focus:ring-[#34562e]"
                 />
               </div>
@@ -238,90 +412,109 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
             </h3>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
-            {/* Credit Card */}
-            <label
-              onClick={() => setPaymentMethod('credit_card')}
-              className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 p-3 text-center transition-all ${
-                paymentMethod === 'credit_card'
-                  ? 'border-[#34562e] bg-[#f0f4ef]'
-                  : 'border-[#c2c8bc]/60 bg-white hover:bg-[#f6f3f2]'
-              }`}
-            >
-              <CreditCard
-                className={`mb-1 h-7 w-7 ${
-                  paymentMethod === 'credit_card' ? 'text-[#34562e]' : 'text-[#5d5f5b]'
-                }`}
-              />
-              <span className="text-xs font-semibold text-[#1b1c1c]">Credit Card</span>
-            </label>
-
-            {/* E-Wallet / QRIS */}
-            <label
-              onClick={() => setPaymentMethod('ewallet')}
-              className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 p-3 text-center transition-all ${
-                paymentMethod === 'ewallet'
-                  ? 'border-[#34562e] bg-[#f0f4ef]'
-                  : 'border-[#c2c8bc]/60 bg-white hover:bg-[#f6f3f2]'
-              }`}
-            >
-              <Wallet
-                className={`mb-1 h-7 w-7 ${
-                  paymentMethod === 'ewallet' ? 'text-[#34562e]' : 'text-[#5d5f5b]'
-                }`}
-              />
-              <span className="text-xs font-semibold text-[#1b1c1c]">E-Wallet / QRIS</span>
-            </label>
-
-            {/* Cash */}
-            <label
-              onClick={() => setPaymentMethod('cash')}
-              className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 p-3 text-center transition-all ${
-                paymentMethod === 'cash'
-                  ? 'border-[#34562e] bg-[#f0f4ef]'
-                  : 'border-[#c2c8bc]/60 bg-white hover:bg-[#f6f3f2]'
-              }`}
-            >
-              <Banknote
-                className={`mb-1 h-7 w-7 ${
-                  paymentMethod === 'cash' ? 'text-[#34562e]' : 'text-[#5d5f5b]'
-                }`}
-              />
-              <span className="text-xs font-semibold text-[#1b1c1c]">Cash / Cashier</span>
-            </label>
+          <div className={`grid gap-3 ${paymentMethods.length <= 3 ? 'grid-cols-3' : paymentMethods.length <= 6 ? 'grid-cols-3' : 'grid-cols-4'}`}>
+            {paymentMethods.map((method) => {
+              const Icon = method.icon;
+              const isSelected = selectedPaymentId === method.id;
+              return (
+                <label
+                  key={method.id}
+                  onClick={() => setSelectedPaymentId(method.id)}
+                  className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 p-3 text-center transition-all ${
+                    isSelected
+                      ? 'border-[#34562e] bg-[#f0f4ef]'
+                      : 'border-[#c2c8bc]/60 bg-white hover:bg-[#f6f3f2]'
+                  }`}
+                >
+                  <Icon
+                    className={`mb-1 h-6 w-6 ${
+                      isSelected ? 'text-[#34562e]' : 'text-[#5d5f5b]'
+                    }`}
+                  />
+                  <span className="text-[11px] font-semibold text-[#1b1c1c] leading-tight">
+                    {method.label}
+                  </span>
+                  {method.description && (
+                    <span className="mt-0.5 text-[9px] text-[#5d5f5b] leading-tight line-clamp-1">
+                      {method.description}
+                    </span>
+                  )}
+                </label>
+              );
+            })}
           </div>
         </section>
 
-        {/* Order Breakdown */}
+        {/* Order Breakdown from Calculate Total API */}
         <section className="space-y-1.5 rounded-xl bg-[#f6f3f2] p-4 text-xs text-[#5d5f5b]">
-          <div className="flex justify-between">
-            <span>Subtotal</span>
-            <span>${subtotal.toFixed(2)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Tax (8%)</span>
-            <span>${tax.toFixed(2)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Service Fee</span>
-            <span>${serviceFee.toFixed(2)}</span>
-          </div>
-          {discount > 0 && (
-            <div className="flex justify-between font-semibold text-[#245a0f]">
-              <span>Diskon Voucher</span>
-              <span>-${discount.toFixed(2)}</span>
+          {isCalculating && (
+            <div className="flex items-center gap-2 py-2">
+              <Loader2 className="h-4 w-4 animate-spin text-[#34562e]" />
+              <span className="text-[#34562e] font-medium">Menghitung total dari ESB...</span>
             </div>
           )}
+
+          <div className="flex justify-between">
+            <span>Subtotal ({cartItems.length} items)</span>
+            <span>Rp{subtotal.toLocaleString('id-ID')}</span>
+          </div>
+
+          {isDelivery && deliveryFee > 0 && (
+            <div className="flex justify-between">
+              <span>Delivery Fee</span>
+              <span>Rp{deliveryFee.toLocaleString('id-ID')}</span>
+            </div>
+          )}
+
+          <div className="flex justify-between">
+            <span>Tax (PB1 + Additional)</span>
+            <span>Rp{tax.toLocaleString('id-ID')}</span>
+          </div>
+
+          {serviceFee > 0 && (
+            <div className="flex justify-between">
+              <span>Service Fee</span>
+              <span>Rp{serviceFee.toLocaleString('id-ID')}</span>
+            </div>
+          )}
+
+          {discountTotal > 0 && (
+            <div className="flex justify-between font-semibold text-[#245a0f]">
+              <span>Discount</span>
+              <span>-Rp{discountTotal.toLocaleString('id-ID')}</span>
+            </div>
+          )}
+
+          {voucherDiscount > 0 && (
+            <div className="flex justify-between font-semibold text-[#245a0f]">
+              <span>Voucher Discount</span>
+              <span>-Rp{voucherDiscount.toLocaleString('id-ID')}</span>
+            </div>
+          )}
+
+          {roundingTotal > 0 && (
+            <div className="flex justify-between">
+              <span>Pembulatan</span>
+              <span>Rp{roundingTotal.toLocaleString('id-ID')}</span>
+            </div>
+          )}
+
           <div className="mt-2 flex justify-between border-t border-[#c2c8bc] pt-2 font-serif text-lg font-bold text-[#1b1c1c]">
             <span>Total Amount</span>
-            <span className="text-[#34562e]">${grandTotal.toFixed(2)}</span>
+            <span className="text-[#34562e]">Rp{grandTotal.toLocaleString('id-ID')}</span>
           </div>
+
+          {!isCalculating && !calculateError && calculatedTotal && (
+            <p className="text-[10px] text-[#34562e] font-medium pt-1">
+              Perhitungan dari ESB ESO-QS Engine
+            </p>
+          )}
         </section>
 
         {/* Action button */}
         <button
           type="submit"
-          disabled={isSubmitting}
+          disabled={isSubmitting || isCalculating || !!calculateError}
           className="flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-[#34562e] font-serif text-lg font-semibold text-white shadow-lg transition-all active:scale-[0.98] hover:bg-[#012202] disabled:opacity-60"
         >
           {isSubmitting ? (

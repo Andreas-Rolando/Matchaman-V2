@@ -15,7 +15,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
   cartCount
 }) => {
   // Hide bottom nav on checkout or order summary if desired, or keep navigation clean
-  if (activeTab === 'checkout' || activeTab === 'order-summary') {
+  if (activeTab === 'checkout' || activeTab === 'order-summary' || activeTab === 'cart') {
     return null;
   }
 
@@ -49,11 +49,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
 
       <button
         onClick={() => onTabChange('cart')}
-        className={`relative flex flex-col items-center justify-center rounded-xl px-4 py-1.5 transition-all duration-200 active:scale-90 ${
-          activeTab === 'cart'
-            ? 'bg-[#34562e] text-white shadow-sm'
-            : 'text-[#5d5f5b] hover:bg-[#e0e0db]/30'
-        }`}
+        className="relative flex flex-col items-center justify-center rounded-xl px-4 py-1.5 transition-all duration-200 active:scale-90 text-[#34562e] bg-[#34562e]/10 shadow-sm"
       >
         <div className="relative">
           <ShoppingCart className="h-5 w-5" />

@@ -21,11 +21,11 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
   onGoToCart,
   branchName,
 }) => {
-  const [selectedCategory, setSelectedCategory] = useState<string>('cat-starters');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
 
-  const filteredItems = menuItems.filter(
-    (item) => item.categoryId === selectedCategory || selectedCategory === 'all'
-  );
+  const filteredItems = selectedCategory === 'all'
+    ? menuItems
+    : menuItems.filter((item) => item.categoryId === selectedCategory);
 
   const totalCartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
   const totalCartPrice = cartItems.reduce((sum, item) => sum + item.totalPrice, 0);
@@ -99,7 +99,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
                         {item.name}
                       </h3>
                       <span className="font-serif text-base font-bold text-[#34562e] flex-shrink-0">
-                        ${item.price.toFixed(2)}
+                        Rp{item.price.toLocaleString('id-ID')}
                       </span>
                     </div>
                     <p className="mt-1 line-clamp-2 text-xs text-[#5d5f5b]">
@@ -161,7 +161,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
                   {totalCartCount} item{totalCartCount > 1 ? 's' : ''} in cart
                 </p>
                 <p className="text-sm font-bold text-[#c7f0bb]">
-                  Total: ${totalCartPrice.toFixed(2)}
+                  Total: Rp{totalCartPrice.toLocaleString('id-ID')}
                 </p>
               </div>
             </div>

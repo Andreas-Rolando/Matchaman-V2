@@ -10,16 +10,12 @@ import { CheckoutScreen } from './components/CheckoutScreen';
 import { OrderSummaryScreen } from './components/OrderSummaryScreen';
 import { EsbEngineModal } from './components/EsbEngineModal';
 import {
-  INITIAL_BRANCHES,
-  CATEGORIES,
-  MENU_ITEMS,
-  AVAILABLE_DEALS,
-  UPSELL_SUGGESTION,
-} from './data/mockData';
-import {
   Branch,
+  BranchPaymentInfo,
+  OrderMode,
   SalesMode,
   MenuItem,
+  Category,
   CartItem,
   CartModifier,
   VoucherDeal,
@@ -28,50 +24,27 @@ import {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('branches');
-  const [branches, setBranches] = useState<Branch[]>(INITIAL_BRANCHES);
-  const [selectedBranch, setSelectedBranch] = useState<Branch>(INITIAL_BRANCHES[0]);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
   const [salesMode, setSalesMode] = useState<SalesMode>('dine_in');
 
-  const [categories] = useState(CATEGORIES);
-  const [menuItems, setMenuItems] = useState<MenuItem[]>(MENU_ITEMS);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
 
-  // Cart state initialized with 2 sample items matching the original mockup design
-  const [cartItems, setCartItems] = useState<CartItem[]>([
-    {
-      cartItemId: 'sample-1',
-      menuItem: MENU_ITEMS[3], // Signature Wagyu Burger
-      quantity: 1,
-      selectedModifiers: [
-        { groupId: 'mod-burger-extras', groupName: 'Customizations', optionId: 'opt-cheese', optionName: 'Extra Cheese', price: 1.50 },
-        { groupId: 'mod-burger-extras', groupName: 'Customizations', optionId: 'opt-no-onion', optionName: 'No Onions', price: 0 }
-      ],
-      unitPrice: 23.50,
-      totalPrice: 23.50,
-      specialNotes: ''
-    },
-    {
-      cartItemId: 'sample-2',
-      menuItem: MENU_ITEMS[0], // Truffle Parmesan Fries
-      quantity: 2,
-      selectedModifiers: [
-        { groupId: 'mod-portion', groupName: 'Portion Size', optionId: 'opt-large', optionName: 'Large Portion', price: 2.00 }
-      ],
-      unitPrice: 14.50,
-      totalPrice: 29.00,
-      specialNotes: ''
-    }
-  ]);
-
+  const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [appliedVoucher, setAppliedVoucher] = useState<VoucherDeal | null>(null);
   const [activeOrder, setActiveOrder] = useState<Order | null>(null);
 
   const [modifierModalItem, setModifierModalItem] = useState<MenuItem | null>(null);
   const [showEsbModal, setShowEsbModal] = useState(false);
-  const [esbMode, setEsbMode] = useState('SANDBOX');
+  const [esbMode, setEsbMode] = useState('LIVE');
+  const [loading, setLoading] = useState(true);
+  const [branchPaymentInfo, setBranchPaymentInfo] = useState<BranchPaymentInfo | null>(null);
+  const [branchOrderModes, setBranchOrderModes] = useState<OrderMode[]>([]);
 
-  // Load live ESB outlets and menu from Express server on boot
+  // Load branches from ESB API on boot
   useEffect(() => {
-    async function loadEsbData() {
+    async function loadBranches() {
       try {
         const configRes = await fetch('/api/esb/config');
         const configData = await configRes.json();
@@ -84,7 +57,7 @@ export default function App() {
             id: o.outlet_id,
             name: o.outlet_name,
             address: o.address,
-            distanceKm: o.distance_km || 0.8,
+            distanceKm: o.distance_km || 0,
             isOpen: o.is_open,
             imageUrl: o.image_url,
             hours: o.operating_hours || '08:00 AM - 11:00 PM',
@@ -93,12 +66,49 @@ export default function App() {
             lng: o.lng,
           }));
           setBranches(mappedBranches);
+          if (mappedBranches.length > 0) {
+            setSelectedBranch(mappedBranches[0]);
+          }
         }
+      } catch (err) {
+        console.error('Failed to load branches:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadBranches();
+  }, []);
 
-        const menuRes = await fetch('/api/esb/menu');
+  // Restore pending order from sessionStorage (after payment redirect)
+  useEffect(() => {
+    const pending = sessionStorage.getItem('pendingOrder');
+    if (pending) {
+      try {
+        const order: Order = JSON.parse(pending);
+        sessionStorage.removeItem('pendingOrder');
+        setActiveOrder(order);
+        setActiveTab('order-summary');
+      } catch (e) {
+        sessionStorage.removeItem('pendingOrder');
+      }
+    }
+  }, []);
+
+  // Load menu when branch is selected
+  useEffect(() => {
+    if (!selectedBranch) return;
+
+    async function loadMenu() {
+      try {
+        const menuRes = await fetch(`/api/esb/menu?branchCode=${selectedBranch!.id}`);
         const menuData = await menuRes.json();
-        if (menuData.success && menuData.data.items.length > 0) {
-          const mappedItems: MenuItem[] = menuData.data.items.map((i: any) => ({
+        if (menuData.success) {
+          const mappedCategories: Category[] = (menuData.data.categories || []).map((c: any) => ({
+            id: c.category_id || c.id || c.categoryID,
+            name: c.category_name || c.name || c.categoryName || 'Unknown',
+          }));
+          setCategories(mappedCategories);
+          const mappedItems: MenuItem[] = (menuData.data.items || []).map((i: any) => ({
             id: i.item_id,
             name: i.item_name,
             price: i.price,
@@ -112,6 +122,8 @@ export default function App() {
               id: mg.group_id,
               name: mg.group_name,
               required: mg.is_required,
+              minQty: mg.min_qty ?? 0,
+              maxQty: mg.max_qty ?? 1,
               options: mg.options.map((o: any) => ({
                 id: o.option_id,
                 name: o.option_name,
@@ -122,12 +134,32 @@ export default function App() {
           setMenuItems(mappedItems);
         }
       } catch (err) {
-        console.log('Using default mock data', err);
+        console.error('Failed to load menu:', err);
       }
     }
+    loadMenu();
+  }, [selectedBranch]);
 
-    loadEsbData();
-  }, []);
+  // Load branch detail (payment info + order modes) when branch is selected
+  useEffect(() => {
+    if (!selectedBranch) return;
+
+    async function loadBranchDetail() {
+      try {
+        const res = await fetch(`/api/esb/outlets/${selectedBranch!.id}`);
+        const data = await res.json();
+        if (data.success && data.data.payment) {
+          setBranchPaymentInfo(data.data.payment);
+        }
+        if (data.success && data.data.available_sales_modes) {
+          setBranchOrderModes(data.data.available_sales_modes);
+        }
+      } catch (err) {
+        console.error('Failed to load branch detail:', err);
+      }
+    }
+    loadBranchDetail();
+  }, [selectedBranch]);
 
   // Cart operations
   const handleAddToCart = (
@@ -176,10 +208,6 @@ export default function App() {
     setCartItems((prev) => prev.filter((ci) => ci.cartItemId !== cartItemId));
   };
 
-  const handleAddUpsell = (upsell: MenuItem) => {
-    handleAddToCart(upsell, 1, [], 'Frequently Bought With');
-  };
-
   // Header Title & Action Mapping
   const getHeaderProps = () => {
     switch (activeTab) {
@@ -193,7 +221,7 @@ export default function App() {
       case 'branch-detail':
         return {
           title: 'Matchaman',
-          subtitle: selectedBranch.name,
+          subtitle: selectedBranch?.name || '',
           showBack: true,
           onBack: () => setActiveTab('branches'),
           actions: 'share' as const,
@@ -201,7 +229,7 @@ export default function App() {
       case 'menu':
         return {
           title: 'Matchaman',
-          subtitle: selectedBranch.name,
+          subtitle: selectedBranch?.name || '',
           showBack: true,
           onBack: () => setActiveTab('branches'),
           actions: 'search' as const,
@@ -250,8 +278,20 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#fcf9f8] text-[#1b1c1c] antialiased">
-      {/* Top Application Bar */}
-      <TopAppBar
+      {/* Loading State */}
+      {loading && (
+        <div className="flex min-h-screen items-center justify-center">
+          <div className="text-center">
+            <div className="mx-auto h-12 w-12 animate-spin rounded-full border-4 border-[#eae7e7] border-t-[#34562e]"></div>
+            <p className="mt-4 text-sm text-[#5d5f5b]">Loading branches...</p>
+          </div>
+        </div>
+      )}
+
+      {!loading && (
+        <>
+          {/* Top Application Bar */}
+          <TopAppBar
         title={headerProps.title}
         subtitle={headerProps.subtitle}
         showBack={headerProps.showBack}
@@ -264,10 +304,10 @@ export default function App() {
 
       {/* Main Screen Content */}
       <main className="min-h-[calc(100vh-3.5rem)]">
-        {activeTab === 'branches' && (
+        {activeTab === 'branches' && branches.length > 0 && (
           <BranchListScreen
             branches={branches}
-            selectedBranch={selectedBranch}
+            selectedBranch={selectedBranch ?? branches[0]}
             onSelectBranch={(branch) => {
               setSelectedBranch(branch);
               setActiveTab('branch-detail');
@@ -275,16 +315,17 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'branch-detail' && (
+        {activeTab === 'branch-detail' && selectedBranch && (
           <BranchDetailScreen
             branch={selectedBranch}
             salesMode={salesMode}
+            orderModes={branchOrderModes}
             onSelectSalesMode={(mode) => setSalesMode(mode)}
             onGoToMenu={() => setActiveTab('menu')}
           />
         )}
 
-        {activeTab === 'menu' && (
+        {activeTab === 'menu' && selectedBranch && (
           <MenuScreen
             categories={categories}
             menuItems={menuItems}
@@ -292,32 +333,34 @@ export default function App() {
             onOpenItemModal={(item) => setModifierModalItem(item)}
             onUpdateCartItemQty={handleUpdateCartQty}
             onGoToCart={() => setActiveTab('cart')}
-            branchName={selectedBranch.name}
+            branchName={selectedBranch?.name || ''}
           />
         )}
 
-        {activeTab === 'cart' && (
+        {activeTab === 'cart' && selectedBranch && (
           <CartScreen
             branch={selectedBranch}
             salesMode={salesMode}
             cartItems={cartItems}
-            availableDeals={AVAILABLE_DEALS}
+            availableDeals={[]}
             appliedVoucher={appliedVoucher}
             onApplyVoucher={(v) => setAppliedVoucher(v)}
             onUpdateQty={handleUpdateCartQty}
             onRemoveItem={handleRemoveCartItem}
-            onAddUpsell={handleAddUpsell}
-            upsellItem={UPSELL_SUGGESTION}
+            onAddUpsell={() => {}}
+            upsellItem={null}
             onProceedToCheckout={() => setActiveTab('checkout')}
           />
         )}
 
-        {activeTab === 'checkout' && (
+        {activeTab === 'checkout' && selectedBranch && (
           <CheckoutScreen
             branch={selectedBranch}
             salesMode={salesMode}
             cartItems={cartItems}
             appliedVoucher={appliedVoucher}
+            paymentInfo={branchPaymentInfo}
+            orderModes={branchOrderModes}
             onOrderPlaced={(order) => {
               setActiveOrder(order);
               setCartItems([]);
@@ -376,6 +419,8 @@ export default function App() {
         onTabChange={(tab) => setActiveTab(tab)}
         cartCount={totalCartCount}
       />
+        </>
+      )}
     </div>
   );
 }

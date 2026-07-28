@@ -89,6 +89,8 @@ export const MENU_ITEMS: MenuItem[] = [
         id: 'mod-portion',
         name: 'Portion Size',
         required: false,
+        minQty: 0,
+        maxQty: 1,
         options: [
           { id: 'opt-reg', name: 'Regular Portion', price: 0 },
           { id: 'opt-large', name: 'Large Portion', price: 2.00 }
@@ -98,6 +100,8 @@ export const MENU_ITEMS: MenuItem[] = [
         id: 'mod-dip',
         name: 'Extra Dipping Sauce',
         required: false,
+        minQty: 0,
+        maxQty: 1,
         options: [
           { id: 'opt-aioli', name: 'Truffle Aioli', price: 1.50 },
           { id: 'opt-cheese', name: 'Melted Cheddar', price: 1.50 }
@@ -120,6 +124,8 @@ export const MENU_ITEMS: MenuItem[] = [
         id: 'mod-spice',
         name: 'Spice Level',
         required: false,
+        minQty: 0,
+        maxQty: 1,
         options: [
           { id: 'opt-mild', name: 'Mild Spice', price: 0 },
           { id: 'opt-hot', name: 'Extra Spicy', price: 0 }
@@ -142,6 +148,8 @@ export const MENU_ITEMS: MenuItem[] = [
         id: 'mod-crust',
         name: 'Crust Preference',
         required: false,
+        minQty: 0,
+        maxQty: 1,
         options: [
           { id: 'opt-thin', name: 'Thin Neapolitan Crust', price: 0 },
           { id: 'opt-cheese-crust', name: 'Stuffed Cheese Crust', price: 3.00 }
@@ -164,6 +172,8 @@ export const MENU_ITEMS: MenuItem[] = [
         id: 'mod-burger-extras',
         name: 'Customizations',
         required: false,
+        minQty: 0,
+        maxQty: 1,
         options: [
           { id: 'opt-cheese', name: 'Extra Cheese', price: 1.50 },
           { id: 'opt-bacon', name: 'Smoked Bacon', price: 2.50 },
@@ -187,6 +197,8 @@ export const MENU_ITEMS: MenuItem[] = [
         id: 'mod-temp',
         name: 'Temperature',
         required: false,
+        minQty: 0,
+        maxQty: 1,
         options: [
           { id: 'opt-iced', name: 'Iced', price: 0 },
           { id: 'opt-hot', name: 'Hot Steamed', price: 0 }
@@ -196,6 +208,8 @@ export const MENU_ITEMS: MenuItem[] = [
         id: 'mod-sweetness',
         name: 'Sweetness Level',
         required: false,
+        minQty: 0,
+        maxQty: 1,
         options: [
           { id: 'opt-100', name: '100% Sweetness', price: 0 },
           { id: 'opt-50', name: '50% Less Sweet', price: 0 },
@@ -219,6 +233,8 @@ export const MENU_ITEMS: MenuItem[] = [
         id: 'mod-ice',
         name: 'Ice Level',
         required: false,
+        minQty: 0,
+        maxQty: 1,
         options: [
           { id: 'opt-reg-ice', name: 'Normal Ice', price: 0 },
           { id: 'opt-less-ice', name: 'Less Ice', price: 0 }

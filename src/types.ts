@@ -1,16 +1,25 @@
-export type SalesMode = 'dine_in' | 'takeaway';
+export type SalesMode = 'dine_in' | 'takeaway' | 'delivery' | string;
+
+export interface OrderMode {
+  type: string;
+  name: string;
+  visitPurposeID: string;
+}
 
 export interface ModifierOption {
   id: string;
   name: string;
   price: number;
+  minQty?: number;
+  maxQty?: number;
 }
 
 export interface ModifierGroup {
   id: string;
   name: string;
   required: boolean;
-  maxSelection?: number;
+  minQty: number;
+  maxQty: number;
   options: ModifierOption[];
 }
 
@@ -42,6 +51,25 @@ export interface Branch {
   lng?: number;
 }
 
+export interface PaymentOption {
+  id: string;
+  name: string;
+  nameId?: string;
+  description?: string;
+  needPhoneInput?: boolean;
+}
+
+export interface BranchPaymentInfo {
+  atCashier: boolean;
+  online: PaymentOption[];
+  paymentMapping: {
+    transactionMode: string;
+    allowedPaymentList: string[];
+  }[];
+  deliveryPayment: boolean;
+  deliveryPaymentName?: string;
+}
+
 export interface Category {
   id: string;
   name: string;
@@ -71,7 +99,7 @@ export interface VoucherDeal {
   title: string;
   description: string;
   discountType: 'percentage' | 'fixed' | 'free_delivery';
-  discountValue: number; // percentage e.g. 15 or fixed e.g. 10000
+  discountValue: number;
   minOrder: number;
   badgeBg: string;
   badgeTextColor: string;
@@ -86,24 +114,47 @@ export interface CustomerInfo {
   notes?: string;
 }
 
-export type PaymentMethod = 'credit_card' | 'ewallet' | 'cash' | 'qris';
+export type PaymentMethod = 'credit_card' | 'ewallet' | 'cash' | 'qris' | string;
+
+export interface CalculatedTotal {
+  subtotal: number;
+  pb1: number;
+  additionalTax: number;
+  otherVatTotal: number;
+  orderFee: number;
+  deliveryCost: number;
+  originalDeliveryCost: number;
+  actualDeliveryCost: number;
+  deliveryCostMessage: string | null;
+  grandTotal: number;
+  roundingTotal: number;
+  discountTotal: number;
+  voucherDiscountTotal: number;
+  minimumSubtotal: number;
+  flagMinimumSubtotal: boolean;
+  flagInclusive: boolean;
+  salesMenus: any[];
+  platformFees: any[];
+  vouchers: any[];
+}
 
 export interface Order {
   id: string;
-  orderNumber: string; // e.g. #QB-88291
+  orderNumber: string;
   branch: Branch;
   salesMode: SalesMode;
   items: CartItem[];
   subtotal: number;
   deliveryFee: number;
-  serviceFee: number;
-  discount: number;
-  appliedVoucherCode?: string;
   tax: number;
   total: number;
+  roundingTotal: number;
   customerInfo: CustomerInfo;
   paymentMethod: PaymentMethod;
   paymentStatus: 'Pending' | 'Berhasil' | 'Gagal';
   createdAt: string;
   esbResponseRef?: string;
+  qrString?: string;
+  branchCode?: string;
+  paymentMethodCode?: string;
 }

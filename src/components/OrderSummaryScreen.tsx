@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle, Copy, Receipt, ShoppingCart, Check, RefreshCw, Cpu } from 'lucide-react';
+import { CheckCircle, Copy, Receipt, ShoppingCart, Check, RefreshCw, QrCode, Clock, XCircle } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import confetti from 'canvas-confetti';
 import { Order } from '../types';
 
@@ -14,10 +15,18 @@ export const OrderSummaryScreen: React.FC<OrderSummaryScreenProps> = ({
 }) => {
   const [copied, setCopied] = useState(false);
   const [checkingStatus, setCheckingStatus] = useState(false);
-  const [liveStatus, setLiveStatus] = useState<string | null>(null);
+  const [paymentStatus, setPaymentStatus] = useState<'settlement' | 'pending' | 'expired' | 'closed' | null>(null);
+  const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
+  const [validateError, setValidateError] = useState<string | null>(null);
+  const [cooldown, setCooldown] = useState(0);
 
   useEffect(() => {
-    // Fire celebratory confetti on mount
+    if (cooldown <= 0) return;
+    const timer = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
+
+  useEffect(() => {
     try {
       confetti({
         particleCount: 70,
@@ -50,38 +59,126 @@ export const OrderSummaryScreen: React.FC<OrderSummaryScreenProps> = ({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleCheckEsbStatus = async () => {
+  const handleValidatePayment = async () => {
+    if (cooldown > 0) return;
     setCheckingStatus(true);
+    setValidateError(null);
     try {
-      const res = await fetch(`/api/esb/order/${order.id}/status`);
+      const res = await fetch(`/api/esb/payment/validate/${order.id}?branchCode=${order.branchCode || order.branch.id}`);
       const data = await res.json();
       if (data.success) {
-        setLiveStatus(`Kitchen Status: ${data.data.kitchen_status} (Est: ${data.data.estimated_ready_time})`);
+        const status = data.data.status as 'settlement' | 'pending' | 'expired' | 'closed';
+        setPaymentStatus(status);
+        setTimeRemaining(data.data.timeRemaining ?? null);
       } else {
-        setLiveStatus('Pesanan terkonfirmasi di ESB system.');
+        setValidateError('Gagal memvalidasi pembayaran. Coba lagi.');
       }
     } catch (err) {
-      setLiveStatus('Status: Diproses tim dapur Matchaman.');
+      setValidateError('Gagal menghubungi server. Coba lagi.');
     } finally {
       setCheckingStatus(false);
+      setCooldown(10);
     }
   };
+
+  const statusConfig = {
+    settlement: { label: 'Pembayaran Berhasil', icon: CheckCircle, bg: 'bg-[#c7f0bb]/40', text: 'text-[#245a0f]' },
+    pending: { label: 'Menunggu Pembayaran', icon: Clock, bg: 'bg-amber-100', text: 'text-amber-800' },
+    expired: { label: 'Pembayaran Kedaluwarsa', icon: XCircle, bg: 'bg-red-100', text: 'text-red-700' },
+    closed: { label: 'Pembayaran Dibatalkan', icon: XCircle, bg: 'bg-red-100', text: 'text-red-700' },
+  };
+
+  const isQrisPayment = order.paymentMethodCode === 'qrisesb';
+  const showQR = isQrisPayment && order.qrString && (!paymentStatus || paymentStatus === 'pending');
+
+  const headerConfig = {
+    settlement: { title: 'Pembayaran Berhasil', desc: 'Pesananmu sedang diproses oleh tim kami.', iconColor: 'bg-[#3c7327]' },
+    pending: { title: 'Menunggu Pembayaran', desc: 'Pesananmu akan diproses setelah pembayaran dikonfirmasi.', iconColor: 'bg-amber-500' },
+    expired: { title: 'Pembayaran Kedaluwarsa', desc: 'Silakan buat pesanan baru untuk mencoba lagi.', iconColor: 'bg-red-500' },
+    closed: { title: 'Pembayaran Dibatalkan', desc: 'Pesanan ini telah dibatalkan.', iconColor: 'bg-red-500' },
+  };
+
+  const header = paymentStatus ? headerConfig[paymentStatus] : headerConfig.settlement;
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 pb-20 pt-6">
       {/* Success Hero Section */}
       <section className="relative flex flex-col items-center text-center">
-        <div className="relative mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-[#3c7327] text-white shadow-lg animate-bounce">
+        <div className={`relative mb-4 flex h-20 w-20 items-center justify-center rounded-full ${header.iconColor} text-white shadow-lg animate-bounce`}>
           <CheckCircle className="h-10 w-10 stroke-[2.5]" />
         </div>
 
         <h1 className="font-serif text-2xl font-bold text-[#1b1c1c]">
-          Pesanan Berhasil
+          {header.title}
         </h1>
         <p className="mt-1 max-w-xs text-xs text-[#42483f]">
-          Terima kasih! Pesananmu sedang diproses oleh tim kami via ESB Engine.
+          {header.desc}
         </p>
       </section>
+
+      {/* QR Code Section */}
+      {showQR && (
+        <section className="mt-6">
+          <div className="rounded-xl border border-[#c2c8bc]/30 bg-white p-6 shadow-xs">
+            <div className="flex items-center gap-2 mb-4">
+              <QrCode className="h-5 w-5 text-[#34562e]" />
+              <h2 className="font-serif text-base font-bold text-[#1b1c1c]">
+                Scan QRIS untuk Bayar
+              </h2>
+            </div>
+            <div className="flex flex-col items-center">
+              <div className="rounded-xl border-2 border-[#1b1c1c] p-4 bg-white">
+                <QRCodeSVG
+                  value={order.qrString || ''}
+                  size={220}
+                  level="M"
+                  includeMargin={false}
+                />
+              </div>
+              <p className="mt-3 text-xs text-[#5d5f5b] text-center">
+                Tunjukkan QR ini ke kasir atau scan dari aplikasi mobile banking/e-wallet kamu.
+              </p>
+              <p className="mt-1 font-serif text-lg font-bold text-[#34562e]">
+                Rp{order.total.toLocaleString('id-ID')}
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Payment Status (after validate) */}
+      {paymentStatus && (
+        <section className="mt-6">
+          <div className={`rounded-xl p-4 ${statusConfig[paymentStatus].bg}`}>
+            <div className="flex items-center gap-3">
+              {React.createElement(statusConfig[paymentStatus].icon, {
+                className: `h-6 w-6 ${statusConfig[paymentStatus].text}`,
+              })}
+              <div>
+                <p className={`font-serif text-sm font-bold ${statusConfig[paymentStatus].text}`}>
+                  {statusConfig[paymentStatus].label}
+                </p>
+                {paymentStatus === 'pending' && timeRemaining !== null && timeRemaining > 0 && (
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    Sisa waktu: {Math.floor(timeRemaining / 60)} menit {timeRemaining % 60} detik
+                  </p>
+                )}
+                {paymentStatus === 'settlement' && (
+                  <p className="text-xs text-[#245a0f] mt-0.5">
+                    Pesananmu akan segera diproses oleh dapur.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {validateError && (
+        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-center text-xs font-semibold text-red-700">
+          {validateError}
+        </div>
+      )}
 
       {/* Order Info Bento Card */}
       <section className="mt-6">
@@ -118,20 +215,21 @@ export const OrderSummaryScreen: React.FC<OrderSummaryScreenProps> = ({
               <p className="text-[11px] font-medium text-[#5d5f5b] uppercase">
                 Status Pembayaran
               </p>
-              <span className="mt-0.5 inline-block rounded-full bg-[#c7f0bb]/40 px-3 py-0.5 text-xs font-bold text-[#245a0f]">
-                {order.paymentStatus}
+              <span className={`mt-0.5 inline-block rounded-full px-3 py-0.5 text-xs font-bold ${
+                paymentStatus === 'settlement'
+                  ? 'bg-[#c7f0bb]/40 text-[#245a0f]'
+                  : paymentStatus === 'pending'
+                    ? 'bg-amber-100 text-amber-800'
+                    : paymentStatus === 'expired' || paymentStatus === 'closed'
+                      ? 'bg-red-100 text-red-700'
+                      : 'bg-[#c7f0bb]/40 text-[#245a0f]'
+              }`}>
+                {paymentStatus
+                  ? statusConfig[paymentStatus].label
+                  : order.paymentStatus === 'Pending' ? 'Menunggu' : order.paymentStatus}
               </span>
             </div>
           </div>
-
-          {order.esbResponseRef && (
-            <div className="mt-3 flex items-center gap-1.5 rounded-lg bg-[#f0eded] px-3 py-1.5 text-[11px] text-[#42483f]">
-              <Cpu className="h-3.5 w-3.5 text-[#34562e]" />
-              <span>
-                ESB Ref: <strong>{order.esbResponseRef}</strong> ({order.salesMode})
-              </span>
-            </div>
-          )}
         </div>
       </section>
 
@@ -173,7 +271,7 @@ export const OrderSummaryScreen: React.FC<OrderSummaryScreenProps> = ({
 
               <div className="text-right">
                 <p className="text-xs font-bold text-[#1b1c1c]">
-                  ${item.totalPrice.toFixed(2)}
+                  Rp{item.totalPrice.toLocaleString('id-ID')}
                 </p>
                 <p className="text-[11px] text-[#5d5f5b]">x{item.quantity}</p>
               </div>
@@ -184,46 +282,45 @@ export const OrderSummaryScreen: React.FC<OrderSummaryScreenProps> = ({
           <div className="mt-4 space-y-1.5 border-t border-dashed border-[#c2c8bc] pt-3 text-xs text-[#5d5f5b]">
             <div className="flex justify-between">
               <span>Subtotal</span>
-              <span>${order.subtotal.toFixed(2)}</span>
+              <span>Rp{order.subtotal.toLocaleString('id-ID')}</span>
             </div>
+            {order.deliveryFee > 0 && (
+              <div className="flex justify-between">
+                <span>Biaya Pengiriman</span>
+                <span>Rp{order.deliveryFee.toLocaleString('id-ID')}</span>
+              </div>
+            )}
             <div className="flex justify-between">
-              <span>Biaya Layanan</span>
-              <span>${order.serviceFee.toFixed(2)}</span>
+              <span>Pajak</span>
+              <span>Rp{order.tax.toLocaleString('id-ID')}</span>
             </div>
-            {order.discount > 0 && (
-              <div className="flex justify-between font-medium text-[#245a0f]">
-                <span>Diskon Promo</span>
-                <span>-${order.discount.toFixed(2)}</span>
+            {order.roundingTotal > 0 && (
+              <div className="flex justify-between">
+                <span>Pembulatan</span>
+                <span>Rp{order.roundingTotal.toLocaleString('id-ID')}</span>
               </div>
             )}
             <div className="flex justify-between pt-1 font-serif text-base font-bold text-[#1b1c1c]">
               <span>Total Bayar</span>
-              <span className="text-[#34562e]">${order.total.toFixed(2)}</span>
+              <span className="text-[#34562e]">Rp{order.total.toLocaleString('id-ID')}</span>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Live Status Re-check Feedback */}
-      {liveStatus && (
-        <div className="mt-4 rounded-xl border border-[#34562e]/30 bg-[#c7f0bb]/20 p-3 text-center text-xs font-semibold text-[#012202]">
-          {liveStatus}
-        </div>
-      )}
-
       {/* Action Buttons */}
       <section className="mt-6 flex flex-col gap-3">
         <button
-          onClick={handleCheckEsbStatus}
-          disabled={checkingStatus}
-          className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#34562e] font-serif text-sm font-semibold text-white shadow-md transition-all active:scale-95 hover:bg-[#012202]"
+          onClick={handleValidatePayment}
+          disabled={checkingStatus || cooldown > 0}
+          className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#34562e] font-serif text-sm font-semibold text-white shadow-md transition-all active:scale-95 hover:bg-[#012202] disabled:opacity-60 disabled:active:scale-100"
         >
           {checkingStatus ? (
             <RefreshCw className="h-4 w-4 animate-spin" />
           ) : (
             <Receipt className="h-4 w-4" />
           )}
-          <span>Cek Status Pembayaran</span>
+          <span>{cooldown > 0 ? `Cek lagi dalam ${cooldown}s` : 'Cek Status Pembayaran'}</span>
         </button>
 
         <button

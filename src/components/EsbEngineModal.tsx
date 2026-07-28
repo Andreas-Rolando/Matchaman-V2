@@ -72,7 +72,7 @@ export const EsbEngineModal: React.FC<EsbEngineModalProps> = ({
                   <div>
                     <p className="font-bold">API Engine Connected</p>
                     <p className="text-[10px] opacity-80">
-                      Endpoint: https://developers.esb.co.id/eso-qs/
+                      Base: {config?.apiBase || 'https://eso-api.esb.co.id'}
                     </p>
                   </div>
                 </div>
@@ -98,15 +98,20 @@ export const EsbEngineModal: React.FC<EsbEngineModalProps> = ({
 
               <div>
                 <p className="font-bold text-[#34562e] mb-1">
-                  Implemented Flow & Routes:
+                  ESB ESO-QS API Endpoints:
                 </p>
                 <ul className="space-y-1 font-mono text-[11px] bg-[#1b1c1c] text-[#c7f0bb] p-3 rounded-lg overflow-x-auto">
-                  <li>GET /api/esb/outlets (Daftar Cabang)</li>
-                  <li>GET /api/esb/outlets/:id (Detail Cabang)</li>
-                  <li>GET /api/esb/menu (Kategori & Menu Items)</li>
-                  <li>POST /api/esb/order (Create Order API)</li>
-                  <li>GET /api/esb/order/:id/status (Cek Status)</li>
+                  <li className="text-[#8fbf7f]">GET /qsv1/branch/{'{lat}'}/{'{long}'}</li>
+                  <li>GET /qsv1/setting/branch</li>
+                  <li className="text-[#8fbf7f]">GET /qsv1/menu/{'{visitPurposeID}'}</li>
+                  <li>POST /qsv1/order/calculate-total</li>
+                  <li className="text-[#8fbf7f]">POST /qsv1/order</li>
+                  <li>GET /qsv1/order/{'{OrderID}'}</li>
+                  <li className="text-[#8fbf7f]">GET /qsv1/payment/validate/{'{OrderID}'}</li>
                 </ul>
+                <p className="mt-2 text-[10px] text-[#5d5f5b]">
+                  Base URL: {config?.apiBase || 'https://eso-api.esb.co.id'}
+                </p>
               </div>
 
               <div className="pt-2">

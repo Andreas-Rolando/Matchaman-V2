@@ -188,7 +188,7 @@ export const BranchListScreen: React.FC<BranchListScreenProps> = ({
               Refer a friend
             </h4>
             <p className="mt-1 text-sm text-white/90">
-              Get $10 off your next matcha order.
+              Get Rp10.000 off your next matcha order.
             </p>
           </div>
           <div className="absolute -right-4 top-0 h-full w-40 opacity-20 flex items-center justify-center pointer-events-none">

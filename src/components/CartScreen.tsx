@@ -12,7 +12,7 @@ interface CartScreenProps {
   onUpdateQty: (cartItemId: string, delta: number) => void;
   onRemoveItem: (cartItemId: string) => void;
   onAddUpsell: (item: MenuItem) => void;
-  upsellItem: MenuItem;
+  upsellItem: MenuItem | null;
   onProceedToCheckout: () => void;
 }
 
@@ -33,8 +33,9 @@ export const CartScreen: React.FC<CartScreenProps> = ({
   const [voucherError, setVoucherError] = useState('');
 
   const subtotal = cartItems.reduce((sum, item) => sum + item.totalPrice, 0);
-  const deliveryFee = salesMode === 'takeaway' ? 0.00 : 2.99;
-  const serviceFee = subtotal > 0 ? 1.50 : 0.00;
+  const isDelivery = salesMode === 'delivery';
+  const deliveryFee = 0;
+  const serviceFee = 0;
 
   // Calculate discount based on applied voucher
   let discount = 0;
@@ -48,7 +49,7 @@ export const CartScreen: React.FC<CartScreenProps> = ({
     }
   }
 
-  const grandTotal = Math.max(0, subtotal + deliveryFee + serviceFee - discount);
+  const grandTotal = Math.max(0, subtotal - discount);
 
   const handleManualVoucherApply = () => {
     setVoucherError('');
@@ -60,7 +61,7 @@ export const CartScreen: React.FC<CartScreenProps> = ({
 
     if (matched) {
       if (subtotal < matched.minOrder) {
-        setVoucherError(`Minimal order $${matched.minOrder.toFixed(2)} untuk voucher ini.`);
+        setVoucherError(`Minimal order Rp${matched.minOrder.toLocaleString('id-ID')} untuk voucher ini.`);
         return;
       }
       onApplyVoucher(matched);
@@ -145,7 +146,7 @@ export const CartScreen: React.FC<CartScreenProps> = ({
 
                   <div className="mt-2 flex items-center justify-between">
                     <span className="font-semibold text-[#34562e]">
-                      ${item.totalPrice.toFixed(2)}
+                      Rp{item.totalPrice.toLocaleString('id-ID')}
                     </span>
 
                     <div className="flex items-center rounded-full bg-[#f0eded] px-1 py-0.5">
@@ -206,7 +207,7 @@ export const CartScreen: React.FC<CartScreenProps> = ({
                           } else if (canApply) {
                             onApplyVoucher(deal);
                           } else {
-                            alert(`Minimum order $${deal.minOrder.toFixed(2)} to use this deal.`);
+                            alert(`Minimum order Rp${deal.minOrder.toLocaleString('id-ID')} to use this deal.`);
                           }
                         }}
                         className={`mt-3 rounded-lg px-3.5 py-1.5 text-xs font-semibold shadow-xs transition-all ${
@@ -217,7 +218,7 @@ export const CartScreen: React.FC<CartScreenProps> = ({
                             : 'bg-black/10 text-black/50 cursor-not-allowed'
                         }`}
                       >
-                        {isApplied ? 'Applied ✓' : canApply ? 'Apply' : `Min. $${deal.minOrder}`}
+                        {isApplied ? 'Applied \u2713' : canApply ? 'Apply' : `Min. Rp${deal.minOrder.toLocaleString('id-ID')}`}
                       </button>
                     </div>
                     {deal.discountType === 'free_delivery' ? (
@@ -273,6 +274,7 @@ export const CartScreen: React.FC<CartScreenProps> = ({
           </section>
 
           {/* Suggestions (Upsell) */}
+          {upsellItem && (
           <section className="mt-6">
             <h3 className="mb-2 text-sm font-semibold text-[#1b1c1c]">
               Frequently Bought With
@@ -291,10 +293,11 @@ export const CartScreen: React.FC<CartScreenProps> = ({
                 onClick={() => onAddUpsell(upsellItem)}
                 className="rounded-lg bg-[#34562e] px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#012202]"
               >
-                +${upsellItem.price.toFixed(2)}
+                Rp{upsellItem.price.toLocaleString('id-ID')}
               </button>
             </div>
           </section>
+          )}
         </>
       )}
 
@@ -305,30 +308,27 @@ export const CartScreen: React.FC<CartScreenProps> = ({
             <div className="mb-4 space-y-1.5 text-xs text-[#5d5f5b]">
               <div className="flex justify-between">
                 <span>Subtotal</span>
-                <span>${subtotal.toFixed(2)}</span>
+                <span>Rp{subtotal.toLocaleString('id-ID')}</span>
               </div>
-              <div className="flex justify-between">
-                <span>Biaya Delivery</span>
-                <span>
-                  {deliveryFee === 0 ? 'FREE' : `$${deliveryFee.toFixed(2)}`}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span>Biaya Layanan</span>
-                <span>${serviceFee.toFixed(2)}</span>
-              </div>
+              {isDelivery && (
+                <div className="flex justify-between">
+                  <span>Biaya Pengiriman</span>
+                  <span className="text-[#34562e] font-semibold">Dihitung di Checkout</span>
+                </div>
+              )}
               {discount > 0 && (
                 <div className="flex justify-between font-medium text-[#245a0f]">
                   <span>Promotions ({appliedVoucher?.code})</span>
-                  <span>-${discount.toFixed(2)}</span>
+                  <span>-Rp{discount.toLocaleString('id-ID')}</span>
                 </div>
               )}
               <div className="mt-2 flex justify-between border-t border-[#f0eded] pt-2 text-sm font-bold text-[#1b1c1c]">
-                <span className="font-serif text-lg">Total</span>
+                <span className="font-serif text-lg">Total (est.)</span>
                 <span className="font-serif text-xl text-[#34562e]">
-                  ${grandTotal.toFixed(2)}
+                  Rp{grandTotal.toLocaleString('id-ID')}
                 </span>
               </div>
+              <p className="text-[10px] text-[#5d5f5b]">*Total akhir dihitung oleh ESB Engine</p>
             </div>
 
             <button
