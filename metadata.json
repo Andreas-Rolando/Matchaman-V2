@@ -1,0 +1,6 @@
+{
+  "name": "Matchaman Zen Cafe",
+  "description": "App pemesanan makanan & minuman Matcha dengan engine API ESB ESO-QS, pilihan cabang, service Dine-in/Takeaway, keranjang, voucher, checkout, dan status order.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
