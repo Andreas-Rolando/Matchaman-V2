@@ -57,6 +57,16 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     req.url = `/api/${originalPath}${url.search}`;
   }
 
+  // Vercel's Node runtime sets `req.query` as an own property before the
+  // handler runs, and that shadows Express's prototype getter — so fixing
+  // req.url alone is not enough. Without this, the routing parameter leaks into
+  // anything built from req.query, most visibly the payment-return redirect,
+  // which sent the customer to /?order=...&__vpath=payment%2Freturn.
+  const parsedQuery = (req as { query?: Record<string, unknown> }).query;
+  if (parsedQuery && typeof parsedQuery === 'object') {
+    delete parsedQuery.__vpath;
+  }
+
   // An Express app is itself an (req, res) handler.
   return app(req, res);
 }
