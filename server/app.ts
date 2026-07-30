@@ -1084,14 +1084,38 @@ function respondLoopError(res: express.Response, err: unknown, context: string) 
 // message, so this is the Loop equivalent of the order endpoints.
 const loopLoginLimiter = createSharedRateLimiter(60000, 3, 'loop-login');
 
+/**
+ * A redirect target Loop will accept, or nothing.
+ *
+ * Loop answers 500 — not a validation error — when redirectUrl is present but
+ * is not a real URL, and APP_URL cannot be trusted to be one: it ships as the
+ * placeholder "MY_APP_URL" and stays that way until somebody fills it in. The
+ * field is optional upstream, so an unusable value is dropped rather than
+ * forwarded.
+ */
+function redirectTarget(req: express.Request): string | undefined {
+  const candidates = [process.env.APP_URL, req.headers.host ? `https://${req.headers.host}` : ''];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      const url = new URL(candidate);
+      if (url.protocol === 'http:' || url.protocol === 'https:') return url.origin;
+    } catch {
+      /* not a URL — try the next candidate */
+    }
+  }
+  return undefined;
+}
+
 app.post('/api/loop/login/start', loopLoginLimiter, async (req, res) => {
   try {
+    const redirectUrl = redirectTarget(req);
     const result: any = await loopFetch('/app/whatsapp/generate-otp', {
       method: 'POST',
       body: {
         requestText: LOOP_OTP_REQUEST_TEXT,
         responseText: LOOP_OTP_RESPONSE_TEXT,
-        redirectUrl: process.env.APP_URL || `https://${req.headers.host}`,
+        ...(redirectUrl ? { redirectUrl } : {}),
         type: LOOP_OTP_TYPE,
       },
     });
