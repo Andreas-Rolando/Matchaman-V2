@@ -167,12 +167,6 @@ export default function App() {
     loadBranches();
   }, [loadBranches]);
 
-  // The browser tab carried the AI Studio scaffold name. Same rule as the
-  // header: the merchant's name is data, not a constant.
-  useEffect(() => {
-    if (companyName) document.title = companyName;
-  }, [companyName]);
-
   // Remember who ordered, so the Account tab can pull their history without a
   // login. Keyed off activeOrder rather than the checkout callback so it also
   // covers an order restored after the payment-gateway redirect.
