@@ -59,8 +59,27 @@ export function createMemoryRateLimiter(windowMs: number, max: number, label: st
 // SHARED (Upstash Redis, correct across instances)
 // ----------------------------------------------------
 
-const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
-const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+// Two naming conventions, because Vercel's Upstash integration does not always
+// use the same one: the Marketplace integration sets UPSTASH_REDIS_REST_*,
+// while the older Vercel KV wiring sets KV_REST_API_*. Reading only the first
+// pair meant a correctly connected database still looked absent, and the order
+// endpoints kept refusing traffic with no hint as to why.
+//
+// Deliberately not REDIS_URL: that is a redis:// TCP endpoint, and this client
+// speaks HTTP because TCP connections do not survive between invocations.
+const URL_VARS = ['UPSTASH_REDIS_REST_URL', 'KV_REST_API_URL'] as const;
+const TOKEN_VARS = ['UPSTASH_REDIS_REST_TOKEN', 'KV_REST_API_TOKEN'] as const;
+
+function firstSet(names: readonly string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value) return value;
+  }
+  return undefined;
+}
+
+const UPSTASH_URL = firstSet(URL_VARS);
+const UPSTASH_TOKEN = firstSet(TOKEN_VARS);
 export const hasUpstash = Boolean(UPSTASH_URL && UPSTASH_TOKEN);
 
 const redis = hasUpstash
@@ -80,9 +99,16 @@ const redis = hasUpstash
 export function createSharedRateLimiter(windowMs: number, max: number, label: string) {
   if (!redis) {
     if (IS_PROD) {
+      // Name every variable that was checked, and which half is missing. A bare
+      // "config missing" sends you looking at the integration when the actual
+      // problem is usually a naming mismatch or a deployment that predates the
+      // variables being added.
       console.error(
-        `[FATAL] UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN missing. ` +
-          `The "${label}" limiter cannot protect this endpoint, so it is refusing all traffic.`
+        `[FATAL] No Upstash REST credentials found. Looked for URL in ` +
+          `[${URL_VARS.join(', ')}] (${UPSTASH_URL ? 'found' : 'MISSING'}) and token in ` +
+          `[${TOKEN_VARS.join(', ')}] (${UPSTASH_TOKEN ? 'found' : 'MISSING'}). ` +
+          `The "${label}" limiter cannot protect this endpoint, so it is refusing all traffic. ` +
+          `Note that environment variables only reach a NEW deployment — redeploy after adding them.`
       );
       return (_req: Request, res: Response) =>
         res.status(503).json({ success: false, error: 'Layanan pemesanan sedang tidak tersedia.' });
