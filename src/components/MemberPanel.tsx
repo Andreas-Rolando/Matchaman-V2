@@ -139,8 +139,10 @@ export const MemberPanel: React.FC = () => {
       const url = data.data?.otp_message_url;
       setOtpUrl(url || null);
       setPhase('waiting');
-      // Opened straight from the click so the browser treats it as user-driven
-      // rather than a popup.
+      // Best effort only. This runs after an await, so it is outside the user
+      // gesture and browsers are entitled to block it — which they do. The
+      // waiting screen therefore leads with a real link the customer taps;
+      // this just saves that tap when the browser allows it.
       if (url) window.open(url, '_blank', 'noopener');
     } catch {
       setError('Tidak dapat menghubungi server.');
@@ -334,30 +336,34 @@ export const MemberPanel: React.FC = () => {
             <MessageCircle className="h-5 w-5" />
           </div>
           <div className="min-w-0">
-            <h3 className="font-serif text-base font-bold text-[#1b1c1c]">Menunggu Verifikasi</h3>
+            <h3 className="font-serif text-base font-bold text-[#1b1c1c]">Verifikasi WhatsApp</h3>
             <p className="mt-0.5 text-xs leading-relaxed text-[#5d5f5b]">
-              WhatsApp sudah terbuka dengan pesan verifikasi. <strong>Kirim pesan itu apa adanya</strong>,
-              jangan diubah, lalu kembali ke halaman ini.
+              Buka WhatsApp lewat tombol di bawah, lalu{' '}
+              <strong>kirim pesannya apa adanya</strong> tanpa diubah sedikit pun. Setelah terkirim,
+              kembali ke halaman ini.
             </p>
           </div>
         </div>
 
-        <p className="mt-3 flex items-center gap-1.5 text-xs text-amber-700">
-          <RefreshCw className="h-3 w-3 animate-spin" />
-          Status diperiksa otomatis tiap {POLL_INTERVAL_MS / 1000} detik
-        </p>
-
+        {/* The primary action, not a fallback: the automatic open above runs
+            after an await and is routinely blocked, so this tap is what the
+            flow actually relies on. */}
         {otpUrl && (
           <a
             href={otpUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#c2c8bc] bg-white text-xs font-semibold text-[#34562e] transition-all active:scale-95"
+            className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#34562e] font-serif text-sm font-semibold text-white shadow-md transition-all active:scale-95 hover:bg-[#012202]"
           >
             <ExternalLink className="h-4 w-4" />
-            Buka WhatsApp lagi
+            Buka WhatsApp
           </a>
         )}
+
+        <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-amber-700">
+          <RefreshCw className="h-3 w-3 animate-spin" />
+          Menunggu pesan terkirim — dicek tiap {POLL_INTERVAL_MS / 1000} detik
+        </p>
 
         <button
           onClick={() => {
