@@ -51,13 +51,20 @@ export const MemberPanel: React.FC = () => {
   const [phone, setPhone] = useState('');
   const [form, setForm] = useState({ firstName: '', lastName: '', password: '', referralCode: '' });
 
-  const loadMemberAndRewards = useCallback(async (): Promise<boolean> => {
+  /**
+   * 'unauthorized' is reported separately from 'error' because the two mean
+   * opposite things depending on when they happen. On first load it just means
+   * nobody is signed in. Straight after a successful verification it means
+   * something went wrong, and silently showing the login screen again makes a
+   * broken login look like one that never started.
+   */
+  const loadMemberAndRewards = useCallback(async (): Promise<'ok' | 'unauthorized' | 'error'> => {
     const res = await fetch('/api/loop/member');
-    if (res.status === 401) return false;
+    if (res.status === 401) return 'unauthorized';
     const data = await res.json();
     if (!data.success) {
       setError(data.error || 'Gagal memuat data member.');
-      return false;
+      return 'error';
     }
     setMember(data.data);
 
@@ -70,7 +77,7 @@ export const MemberPanel: React.FC = () => {
     } catch {
       /* leave the list empty */
     }
-    return true;
+    return 'ok';
   }, []);
 
   // Is there already a session? The cookie is httpOnly, so the only way to know
@@ -79,8 +86,9 @@ export const MemberPanel: React.FC = () => {
     let cancelled = false;
     (async () => {
       try {
-        const signedIn = await loadMemberAndRewards();
-        if (!cancelled) setPhase(signedIn ? 'signed-in' : 'signed-out');
+        const result = await loadMemberAndRewards();
+        // Nobody signed in yet is the normal case here, not a failure.
+        if (!cancelled) setPhase(result === 'ok' ? 'signed-in' : 'signed-out');
       } catch {
         if (!cancelled) setPhase('signed-out');
       }
@@ -231,9 +239,15 @@ export const MemberPanel: React.FC = () => {
             return;
           }
         } else if (data.data?.status === 'VERIFIED') {
-          const signedIn = await loadMemberAndRewards();
+          const result = await loadMemberAndRewards();
           if (cancelled) return;
-          setPhase(signedIn ? 'signed-in' : 'signed-out');
+          if (result === 'unauthorized') {
+            // Verification succeeded but the session did not survive the round
+            // trip. Say so — dropping back to the login screen without a word
+            // is what makes this indistinguishable from "nothing happened".
+            setError('Nomor terverifikasi, tetapi sesi member gagal dibuat. Coba lagi.');
+          }
+          setPhase(result === 'ok' ? 'signed-in' : 'signed-out');
           return;
         } else if (data.data?.status === 'EXPIRED') {
           setPollGaveUp(true);
