@@ -9,18 +9,19 @@
       "DOM",
       "DOM.Iterable"
     ],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "skipLibCheck": true,
     "moduleResolution": "bundler",
     "isolatedModules": true,
     "moduleDetection": "force",
-    "allowJs": true,
     "jsx": "react-jsx",
-    "paths": {
-      "@/*": [
-        "./*"
-      ]
-    },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  // Without this, tsc walks the whole project directory and type-checks the
+  // minified output in dist/ and build/ as well — slow, and it makes `npm run
+  // lint` depend on whether you happen to have built recently.
+  "include": ["src", "server", "api", "server.ts", "vite.config.ts"]
 }

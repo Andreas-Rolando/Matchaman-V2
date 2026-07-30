@@ -144,7 +144,8 @@ export const ItemModifierModal: React.FC<ItemModifierModalProps> = ({
           />
           <button
             onClick={onClose}
-            className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-md transition-transform active:scale-90"
+            className="tap-44 absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-md transition-transform active:scale-90"
+            aria-label="Tutup"
           >
             <X className="h-5 w-5" />
           </button>
@@ -198,7 +199,6 @@ export const ItemModifierModal: React.FC<ItemModifierModalProps> = ({
                           // Multi-select with +/- qty controls
                           const optQty = getOptionQty(group.id, option.id);
                           const canAdd = optQty < group.maxQty && groupQty < group.maxQty;
-                          const canRemove = optQty > 0;
 
                           return (
                             <div
@@ -236,7 +236,8 @@ export const ItemModifierModal: React.FC<ItemModifierModalProps> = ({
                                         e.stopPropagation();
                                         handleOptionQty(group, option.id, option.name, option.price, -1);
                                       }}
-                                      className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-[#34562e] shadow-xs active:scale-90"
+                                      className="tap-44 flex h-6 w-6 items-center justify-center rounded-full bg-white text-[#34562e] shadow-xs active:scale-90"
+                                      aria-label={`Kurangi ${option.name}`}
                                     >
                                       <Minus className="h-3 w-3" />
                                     </button>
@@ -249,7 +250,8 @@ export const ItemModifierModal: React.FC<ItemModifierModalProps> = ({
                                         if (canAdd) handleOptionQty(group, option.id, option.name, option.price, 1);
                                       }}
                                       disabled={!canAdd}
-                                      className="flex h-6 w-6 items-center justify-center rounded-full bg-[#34562e] text-white shadow-xs active:scale-90 disabled:opacity-40"
+                                      className="tap-44 flex h-6 w-6 items-center justify-center rounded-full bg-[#34562e] text-white shadow-xs active:scale-90 disabled:opacity-40"
+                                      aria-label={`Tambah ${option.name}`}
                                     >
                                       <Plus className="h-3 w-3" />
                                     </button>
@@ -261,7 +263,8 @@ export const ItemModifierModal: React.FC<ItemModifierModalProps> = ({
                                       e.stopPropagation();
                                       handleOptionQty(group, option.id, option.name, option.price, 1);
                                     }}
-                                    className="flex h-6 w-6 items-center justify-center rounded-full bg-[#34562e] text-white shadow-xs active:scale-90"
+                                    className="tap-44 flex h-6 w-6 items-center justify-center rounded-full bg-[#34562e] text-white shadow-xs active:scale-90"
+                                    aria-label={`Pilih ${option.name}`}
                                   >
                                     <Plus className="h-3 w-3" />
                                   </button>
@@ -279,7 +282,7 @@ export const ItemModifierModal: React.FC<ItemModifierModalProps> = ({
                             onClick={() =>
                               handleSingleToggle(group, option.id, option.name, option.price)
                             }
-                            className={`flex cursor-pointer items-center justify-between rounded-lg p-2.5 transition-all active:scale-[0.98] ${
+                            className={`tap-44 flex cursor-pointer items-center justify-between rounded-lg p-2.5 transition-all active:scale-[0.98] ${
                               isSelected
                                 ? 'bg-[#34562e] text-white shadow-xs'
                                 : 'bg-white text-[#1b1c1c] hover:bg-[#eae7e7]'
@@ -341,7 +344,8 @@ export const ItemModifierModal: React.FC<ItemModifierModalProps> = ({
             <div className="flex items-center rounded-full bg-[#f0eded] p-1">
               <button
                 onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-[#1b1c1c] shadow-xs active:scale-90"
+                className="tap-44 flex h-8 w-8 items-center justify-center rounded-full bg-white text-[#1b1c1c] shadow-xs active:scale-90"
+                aria-label="Kurangi jumlah"
               >
                 <Minus className="h-4 w-4" />
               </button>
@@ -350,7 +354,8 @@ export const ItemModifierModal: React.FC<ItemModifierModalProps> = ({
               </span>
               <button
                 onClick={() => setQuantity((q) => q + 1)}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-[#34562e] text-white shadow-xs active:scale-90"
+                className="tap-44 flex h-8 w-8 items-center justify-center rounded-full bg-[#34562e] text-white shadow-xs active:scale-90"
+                aria-label="Tambah jumlah"
               >
                 <Plus className="h-4 w-4" />
               </button>

@@ -129,13 +129,55 @@ export interface CalculatedTotal {
   grandTotal: number;
   roundingTotal: number;
   discountTotal: number;
-  voucherDiscountTotal: number;
   minimumSubtotal: number;
   flagMinimumSubtotal: boolean;
   flagInclusive: boolean;
   salesMenus: any[];
   platformFees: any[];
+  // Promotion (promotionCode) — ESB reports promo savings here.
+  promotionID: number | null;
+  promotionCode: string | null;
+  promotionDiscount: number;
+  // Gift vouchers — a separate mechanism from promotionCode, unused by this app.
+  voucherDiscountTotal: number;
+  voucherTotal: number;
   vouchers: any[];
+}
+
+/** Identity used to look up order history. ESB scopes history to a user token
+ *  minted from name + email, so this is what the Account tab needs to have. */
+export interface HistoryIdentity {
+  fullName: string;
+  email: string;
+  phone?: string;
+}
+
+/** One row from ESB's user order history (POST /v1/user/order), snake_cased by
+ *  the proxy to match the rest of this app's API surface. */
+export interface OrderHistoryItem {
+  order_id: string;
+  branch_code: string;
+  branch_name: string;
+  transaction_date: string;
+  order_type: string;
+  order_type_name: string;
+  grand_total: number;
+  total_item: number;
+  status: string;
+  payment_status: string;
+  status_id: number | null;
+  queue_num: number | null;
+  currency_sign: string;
+  image_url?: string;
+  refund_status?: string | null;
+  is_allow_reorder: boolean;
+}
+
+export interface OrderHistoryPagination {
+  total_count: number;
+  page_count: number;
+  current_page: number;
+  per_page: number;
 }
 
 export interface Order {

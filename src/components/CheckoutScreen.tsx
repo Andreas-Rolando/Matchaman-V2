@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { User, CreditCard, Wallet, Banknote, Smartphone, ArrowRight, Loader2, ShieldCheck, QrCode, AlertCircle } from 'lucide-react';
-import { Branch, BranchPaymentInfo, SalesMode, CartItem, VoucherDeal, CustomerInfo, PaymentMethod, Order, OrderMode, CalculatedTotal } from '../types';
+import { User, CreditCard, Wallet, Banknote, Smartphone, ArrowRight, Loader2, ShieldCheck, QrCode, AlertCircle, Tag } from 'lucide-react';
+import { Branch, BranchPaymentInfo, SalesMode, CartItem, VoucherDeal, CustomerInfo, Order, OrderMode, CalculatedTotal } from '../types';
 
 interface CheckoutScreenProps {
   branch: Branch;
@@ -10,7 +10,6 @@ interface CheckoutScreenProps {
   paymentInfo: BranchPaymentInfo | null;
   orderModes: OrderMode[];
   onOrderPlaced: (order: Order) => void;
-  onBackToCart: () => void;
 }
 
 function buildSalesMenus(cartItems: CartItem[]): any[] {
@@ -73,14 +72,13 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
   paymentInfo,
   orderModes,
   onOrderPlaced,
-  onBackToCart,
 }) => {
   const [customer, setCustomer] = useState<CustomerInfo>({
-    fullName: 'Andreas Rolando',
-    email: 'andreas.rolando@esb.co.id',
-    phone: '08123456789',
-    tableNumber: salesMode === 'dine_in' ? '12' : '',
-    address: salesMode === 'delivery' ? 'Jl. Sudirman No. 1, Jakarta' : '',
+    fullName: '',
+    email: '',
+    phone: '',
+    tableNumber: '',
+    address: '',
   });
 
   const [selectedPaymentId, setSelectedPaymentId] = useState<string>('');
@@ -89,6 +87,32 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
   const [calculatedTotal, setCalculatedTotal] = useState<CalculatedTotal | null>(null);
   const [isCalculating, setIsCalculating] = useState(true);
   const [calculateError, setCalculateError] = useState('');
+  const [cachedSalesMenus, setCachedSalesMenus] = useState<any[]>([]);
+  const [promoRejected, setPromoRejected] = useState(false);
+
+  // ESB requires phoneNumber whenever promotionCode is sent, so with a promo
+  // applied the phone is genuinely part of the calculate-total input rather
+  // than incidental. Debounced so typing doesn't fire a request per keystroke,
+  // and only fed into the effect's deps when a promo is actually applied —
+  // without one the request is phone-independent and must not re-run.
+  const [debouncedPhone, setDebouncedPhone] = useState(customer.phone);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedPhone(customer.phone), 600);
+    return () => clearTimeout(timer);
+  }, [customer.phone]);
+
+  const promoCode = appliedVoucher?.code || '';
+  const promoPhone = promoCode ? debouncedPhone.trim() : '';
+  // Without a phone number the promo cannot be evaluated at all. Say that,
+  // instead of sending a request we already know ESB will reject and then
+  // telling the customer their perfectly valid promo was refused.
+  const promoNeedsPhone = Boolean(promoCode) && promoPhone === '';
+
+  // Send the promo with the order only when the total on screen was actually
+  // computed with it. `promoNeedsPhone` matters here too: the phone field is
+  // required, so it will be filled by submit time, but if the 600ms debounce
+  // hasn't flushed yet the displayed total is still the undiscounted one.
+  const promoUsable = Boolean(promoCode) && !promoRejected && !promoNeedsPhone;
 
   const orderType = mapSalesModeToOrderType(salesMode);
   const isDelivery = salesMode === 'delivery';
@@ -104,8 +128,10 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
     async function calculateTotal() {
       setIsCalculating(true);
       setCalculateError('');
+      setPromoRejected(false);
       try {
         const salesMenus = buildSalesMenus(cartItems);
+        setCachedSalesMenus(salesMenus);
         const payload: Record<string, any> = {
           branchCode: branch.id,
           visitPurposeID,
@@ -119,6 +145,11 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
           payload.longitude = branch.lng || 106.8456;
         }
 
+        if (promoCode && promoPhone) {
+          payload.promotionCode = promoCode;
+          payload.phoneNumber = promoPhone;
+        }
+
         const res = await fetch('/api/esb/calculate-total', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -127,6 +158,7 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
         const data = await res.json();
         if (data.success && data.data) {
           setCalculatedTotal(data.data);
+          setPromoRejected(Boolean(data.promotionRejected));
         } else {
           setCalculateError(data.error || 'Gagal menghitung total');
         }
@@ -138,7 +170,7 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
     }
 
     calculateTotal();
-  }, [cartItems, branch.id, visitPurposeID, orderType, isDelivery]);
+  }, [cartItems, branch.id, visitPurposeID, orderType, isDelivery, appliedVoucher, promoCode, promoPhone]);
 
   const subtotal = calculatedTotal?.subtotal ?? cartItems.reduce((sum, item) => sum + item.totalPrice, 0);
   const deliveryFee = calculatedTotal?.deliveryCost ?? 0;
@@ -148,6 +180,9 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
   const roundingTotal = calculatedTotal?.roundingTotal ?? 0;
   const discountTotal = calculatedTotal?.discountTotal ?? 0;
   const voucherDiscount = calculatedTotal?.voucherDiscountTotal ?? 0;
+  // ESB reports promotionCode savings separately from gift-voucher savings.
+  const promotionDiscount = calculatedTotal?.promotionDiscount ?? 0;
+  const appliedPromoCode = calculatedTotal?.promotionCode || null;
 
   const buildPaymentMethods = () => {
     const methods: { id: string; label: string; icon: any; description?: string }[] = [];
@@ -174,14 +209,12 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
       }
     }
 
-    if (methods.length === 0) {
-      methods.push(
-        { id: 'cashier', label: 'Bayar di Kasir', icon: Banknote, description: 'Pay at the cashier' },
-        { id: 'ewallet', label: 'E-Wallet', icon: Wallet, description: 'OVO, GoPay, DANA' },
-        { id: 'qris', label: 'QRIS', icon: QrCode, description: 'Scan QR to pay' },
-      );
-    }
-
+    // No invented fallback here on purpose. This used to push hardcoded
+    // 'cashier' / 'ewallet' / 'qris' entries whenever a branch reported none —
+    // but 'ewallet' and 'qris' are not ESB payment method IDs at all (the real
+    // ones look like qrisesb, danaesb, gopay, ovo), so the customer was offered
+    // methods that could only ever come back as "payment method not supported".
+    // A branch with nothing configured has nothing to offer; say so instead.
     return methods;
   };
 
@@ -192,6 +225,36 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
       setSelectedPaymentId(paymentMethods[0].id);
     }
   }, [paymentMethods, selectedPaymentId]);
+
+  // Re-price without the promo. Needed when ESB creates the order but refuses
+  // the promotion: the order already exists, so the receipt has to show what
+  // the cashier will actually charge, not the discounted figure calculate-total
+  // returned earlier. Returns null on any failure — the caller falls back to
+  // the figures already on screen rather than blocking on this.
+  const fetchTotalsWithoutPromo = async (salesMenus: any[]): Promise<CalculatedTotal | null> => {
+    try {
+      const payload: Record<string, any> = {
+        branchCode: branch.id,
+        visitPurposeID,
+        orderType,
+        salesMenus,
+        userToken: '',
+      };
+      if (isDelivery) {
+        payload.latitude = branch.lat || -6.2088;
+        payload.longitude = branch.lng || 106.8456;
+      }
+      const res = await fetch('/api/esb/calculate-total', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      return data.success && data.data ? (data.data as CalculatedTotal) : null;
+    } catch {
+      return null;
+    }
+  };
 
   const handleSubmitOrder = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -205,11 +268,21 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
       return;
     }
 
+    // Guards the case the disabled button cannot: a form submitted via Enter.
+    if (!selectedPaymentId) {
+      setErrorMessage(
+        paymentMethods.length === 0
+          ? 'Cabang ini belum mengaktifkan metode pembayaran. Silakan pilih cabang lain.'
+          : 'Pilih metode pembayaran terlebih dahulu.'
+      );
+      return;
+    }
+
     setIsSubmitting(true);
     setErrorMessage('');
 
     try {
-      const salesMenus = buildSalesMenus(cartItems);
+      const salesMenus = cachedSalesMenus.length > 0 ? cachedSalesMenus : buildSalesMenus(cartItems);
       const amount = Math.max(0, grandTotal - roundingTotal);
 
       const orderPayload: Record<string, any> = {
@@ -237,7 +310,98 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
       }
 
       if (selectedPaymentId !== 'cashier') {
-        orderPayload.returnUrl = window.location.origin;
+        // ESB sends the customer back with a POST, which a static CDN can't
+        // answer — so point it at the API function, which 303-redirects to "/".
+        orderPayload.returnUrl = `${window.location.origin}/api/payment/return`;
+      }
+
+      // Only forward a promo ESB actually accepted during calculate-total —
+      // otherwise the order would 400 on a code we already know it rejects.
+      if (promoUsable) {
+        orderPayload.promotionCode = promoCode;
+      }
+
+      if (selectedPaymentId === 'cashier') {
+        // Cashier path: use Encrypt QR Data API instead of Save Order
+        const fullName = customer.tableNumber && isDineIn
+          ? `${customer.fullName} - ${customer.tableNumber}`
+          : customer.fullName;
+        const qrPayload: Record<string, any> = {
+          branchCode: branch.id,
+          orderType,
+          fullName,
+          email: customer.email,
+          phoneNumber: customer.phone,
+          visitPurposeID,
+          salesMenus,
+        };
+
+        if (promoUsable) {
+          qrPayload.promotionCode = promoCode;
+        }
+
+        const response = await fetch('/api/esb/order/qr-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(qrPayload),
+        });
+
+        const resData = await response.json();
+
+        // A rejection here means the QR the cashier scans carries no promo while
+        // the total on screen does. The order itself already exists — the server
+        // retried without the promo and ESB returned a real orderID — so
+        // discarding it would strand an unclaimed order on the branch POS and
+        // create a duplicate as soon as the customer resubmits. Keep the order
+        // and re-price it instead, so the receipt matches the QR.
+        let totals = { subtotal, deliveryFee, tax, total: grandTotal, roundingTotal };
+        if (resData.success && resData.promotionRejected) {
+          setPromoRejected(true);
+          const repriced = await fetchTotalsWithoutPromo(salesMenus);
+          if (repriced) {
+            setCalculatedTotal(repriced);
+            totals = {
+              subtotal: repriced.subtotal ?? subtotal,
+              deliveryFee: repriced.deliveryCost ?? 0,
+              tax: (repriced.pb1 ?? 0) + (repriced.additionalTax ?? 0),
+              total: repriced.grandTotal ?? grandTotal,
+              roundingTotal: repriced.roundingTotal ?? 0,
+            };
+          }
+        }
+
+        if (resData.success) {
+          const createdOrder: Order = {
+            id: resData.data.order_id,
+            orderNumber: resData.data.order_id,
+            branch,
+            salesMode,
+            items: cartItems,
+            subtotal: totals.subtotal,
+            deliveryFee: totals.deliveryFee,
+            tax: totals.tax,
+            total: totals.total,
+            roundingTotal: totals.roundingTotal,
+            customerInfo: customer,
+            paymentMethod: 'cashier',
+            paymentStatus: 'Pending',
+            createdAt: new Date().toLocaleString('id-ID', {
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            }),
+            qrString: resData.data.qr_data || '',
+            branchCode: branch.id,
+            paymentMethodCode: 'cashier',
+          };
+
+          onOrderPlaced(createdOrder);
+        } else {
+          setErrorMessage(resData.error || resData.message || 'Gagal membuat QR untuk kasir.');
+        }
+        return;
       }
 
       const response = await fetch('/api/esb/order', {
@@ -328,6 +492,26 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
         </div>
       )}
 
+      {promoNeedsPhone && appliedVoucher && (
+        <div className="mb-4 flex items-start gap-2 rounded-xl bg-[#fff3e0] p-3 text-xs text-[#e65100]">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Isi nomor HP untuk memakai promo <strong>{appliedVoucher.code}</strong>. Promo
+            diverifikasi lewat nomor telepon, jadi total di bawah belum termasuk diskon.
+          </span>
+        </div>
+      )}
+
+      {!promoNeedsPhone && promoRejected && appliedVoucher && (
+        <div className="mb-4 flex items-start gap-2 rounded-xl bg-[#fff3e0] p-3 text-xs text-[#e65100]">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Promo <strong>{appliedVoucher.code}</strong> tidak dapat digunakan untuk pesanan ini
+            dan tidak diterapkan. Total di bawah adalah harga tanpa promo.
+          </span>
+        </div>
+      )}
+
       <form onSubmit={handleSubmitOrder} className="space-y-5">
         {/* Customer Information Card */}
         <section className="rounded-xl border border-[#eae7e7] bg-white p-4 shadow-xs">
@@ -389,6 +573,10 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
                 <Banknote className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#5d5f5b]" />
                 <input
                   type="text"
+                  // Delivery only: a blank address silently falls back to the
+                  // branch's own address below, which sends the courier back to
+                  // the cafe. Table number and notes stay optional.
+                  required={isDelivery}
                   value={isDineIn ? customer.tableNumber : customer.address}
                   onChange={(e) =>
                     isDineIn
@@ -411,6 +599,16 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
               Payment Method
             </h3>
           </div>
+
+          {paymentMethods.length === 0 && (
+            <div className="flex items-start gap-2 rounded-xl bg-[#fff3e0] p-3 text-xs text-[#e65100]">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                Cabang ini belum mengaktifkan metode pembayaran apa pun, jadi pesanan tidak bisa
+                diselesaikan di sini. Pilih cabang lain untuk melanjutkan.
+              </span>
+            </div>
+          )}
 
           <div className={`grid gap-3 ${paymentMethods.length <= 3 ? 'grid-cols-3' : paymentMethods.length <= 6 ? 'grid-cols-3' : 'grid-cols-4'}`}>
             {paymentMethods.map((method) => {
@@ -478,6 +676,16 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
             </div>
           )}
 
+          {promotionDiscount > 0 && (
+            <div className="flex justify-between font-semibold text-[#245a0f]">
+              <span className="flex items-center gap-1">
+                <Tag className="h-3.5 w-3.5" />
+                Promo{appliedPromoCode ? ` (${appliedPromoCode})` : ''}
+              </span>
+              <span>-Rp{promotionDiscount.toLocaleString('id-ID')}</span>
+            </div>
+          )}
+
           {discountTotal > 0 && (
             <div className="flex justify-between font-semibold text-[#245a0f]">
               <span>Discount</span>
@@ -514,7 +722,7 @@ export const CheckoutScreen: React.FC<CheckoutScreenProps> = ({
         {/* Action button */}
         <button
           type="submit"
-          disabled={isSubmitting || isCalculating || !!calculateError}
+          disabled={isSubmitting || isCalculating || !!calculateError || paymentMethods.length === 0}
           className="flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-[#34562e] font-serif text-lg font-semibold text-white shadow-lg transition-all active:scale-[0.98] hover:bg-[#012202] disabled:opacity-60"
         >
           {isSubmitting ? (

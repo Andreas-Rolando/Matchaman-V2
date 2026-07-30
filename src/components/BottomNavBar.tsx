@@ -22,7 +22,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
   const isMenuGroup = activeTab === 'menu' || activeTab === 'branch-detail';
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around border-t border-[#c2c8bc]/30 bg-[#ffffff] px-4 py-2 shadow-[0px_-4px_24px_rgba(0,0,0,0.06)] rounded-t-xl">
+    <nav className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around border-t border-[#c2c8bc]/30 bg-[#ffffff] px-4 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] shadow-[0px_-4px_24px_rgba(0,0,0,0.06)] rounded-t-xl">
       <button
         onClick={() => onTabChange('branches')}
         className={`flex flex-col items-center justify-center rounded-xl px-4 py-1.5 transition-all duration-200 active:scale-90 ${

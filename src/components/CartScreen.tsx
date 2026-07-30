@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, Plus, Minus, Tag, Coffee, ArrowRight, Truck, Percent, Check } from 'lucide-react';
-import { CartItem, VoucherDeal, MenuItem, Branch, SalesMode } from '../types';
+import { CartItem, VoucherDeal, Branch, SalesMode } from '../types';
 
 interface CartScreenProps {
   branch: Branch;
@@ -11,8 +11,6 @@ interface CartScreenProps {
   onApplyVoucher: (voucher: VoucherDeal | null) => void;
   onUpdateQty: (cartItemId: string, delta: number) => void;
   onRemoveItem: (cartItemId: string) => void;
-  onAddUpsell: (item: MenuItem) => void;
-  upsellItem: MenuItem | null;
   onProceedToCheckout: () => void;
 }
 
@@ -25,8 +23,6 @@ export const CartScreen: React.FC<CartScreenProps> = ({
   onApplyVoucher,
   onUpdateQty,
   onRemoveItem,
-  onAddUpsell,
-  upsellItem,
   onProceedToCheckout,
 }) => {
   const [voucherCodeInput, setVoucherCodeInput] = useState('');
@@ -35,7 +31,6 @@ export const CartScreen: React.FC<CartScreenProps> = ({
   const subtotal = cartItems.reduce((sum, item) => sum + item.totalPrice, 0);
   const isDelivery = salesMode === 'delivery';
   const deliveryFee = 0;
-  const serviceFee = 0;
 
   // Calculate discount based on applied voucher
   let discount = 0;
@@ -124,7 +119,7 @@ export const CartScreen: React.FC<CartScreenProps> = ({
                       </h3>
                       <button
                         onClick={() => onRemoveItem(item.cartItemId)}
-                        className="text-[#5d5f5b] hover:text-[#ba1a1a] transition-colors p-1"
+                        className="tap-44 text-[#5d5f5b] hover:text-[#ba1a1a] transition-colors p-1"
                         aria-label="Remove item"
                       >
                         <X className="h-4 w-4" />
@@ -152,7 +147,8 @@ export const CartScreen: React.FC<CartScreenProps> = ({
                     <div className="flex items-center rounded-full bg-[#f0eded] px-1 py-0.5">
                       <button
                         onClick={() => onUpdateQty(item.cartItemId, -1)}
-                        className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-[#1b1c1c] shadow-xs active:scale-90"
+                        className="tap-44 flex h-7 w-7 items-center justify-center rounded-full bg-white text-[#1b1c1c] shadow-xs active:scale-90"
+                        aria-label="Kurangi jumlah"
                       >
                         <Minus className="h-3.5 w-3.5" />
                       </button>
@@ -161,7 +157,8 @@ export const CartScreen: React.FC<CartScreenProps> = ({
                       </span>
                       <button
                         onClick={() => onUpdateQty(item.cartItemId, 1)}
-                        className="flex h-7 w-7 items-center justify-center rounded-full bg-[#34562e] text-white shadow-xs active:scale-90"
+                        className="tap-44 flex h-7 w-7 items-center justify-center rounded-full bg-[#34562e] text-white shadow-xs active:scale-90"
+                        aria-label="Tambah jumlah"
                       >
                         <Plus className="h-3.5 w-3.5" />
                       </button>
@@ -210,7 +207,7 @@ export const CartScreen: React.FC<CartScreenProps> = ({
                             alert(`Minimum order Rp${deal.minOrder.toLocaleString('id-ID')} to use this deal.`);
                           }
                         }}
-                        className={`mt-3 rounded-lg px-3.5 py-1.5 text-xs font-semibold shadow-xs transition-all ${
+                        className={`tap-44 mt-3 rounded-lg px-3.5 py-1.5 text-xs font-semibold shadow-xs transition-all ${
                           isApplied
                             ? 'bg-white text-[#34562e]'
                             : canApply
@@ -265,46 +262,20 @@ export const CartScreen: React.FC<CartScreenProps> = ({
                 </div>
                 <button
                   onClick={() => onApplyVoucher(null)}
-                  className="text-xs font-bold text-[#ba1a1a] hover:underline"
+                  className="tap-44 text-xs font-bold text-[#ba1a1a] hover:underline"
                 >
                   Hapus
                 </button>
               </div>
             )}
           </section>
-
-          {/* Suggestions (Upsell) */}
-          {upsellItem && (
-          <section className="mt-6">
-            <h3 className="mb-2 text-sm font-semibold text-[#1b1c1c]">
-              Frequently Bought With
-            </h3>
-            <div className="flex items-center gap-3 rounded-xl border border-[#f0eded] bg-[#f0eded] p-3">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-white shadow-xs">
-                <Coffee className="h-6 w-6 text-[#34562e]" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h4 className="text-xs font-bold text-[#1b1c1c] truncate">
-                  {upsellItem.name}
-                </h4>
-                <p className="text-[10px] text-[#5d5f5b]">Perfect pairing with Matcha</p>
-              </div>
-              <button
-                onClick={() => onAddUpsell(upsellItem)}
-                className="rounded-lg bg-[#34562e] px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#012202]"
-              >
-                Rp{upsellItem.price.toLocaleString('id-ID')}
-              </button>
-            </div>
-          </section>
-          )}
         </>
       )}
 
       {/* Checkout Fixed Bottom Sheet */}
       {cartItems.length > 0 && (
         <div className="fixed bottom-0 left-0 right-0 z-50 rounded-t-[24px] border-t border-[#f6f3f2] bg-white shadow-[0px_-4px_24px_rgba(0,0,0,0.08)]">
-          <div className="mx-auto max-w-3xl px-4 py-4">
+          <div className="mx-auto max-w-3xl px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
             <div className="mb-4 space-y-1.5 text-xs text-[#5d5f5b]">
               <div className="flex justify-between">
                 <span>Subtotal</span>

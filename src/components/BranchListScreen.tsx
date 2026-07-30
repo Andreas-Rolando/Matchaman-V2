@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, MapPin, Navigation, Sparkles, Map as MapIcon, ChevronRight } from 'lucide-react';
+import { Search, MapPin, Navigation, Sparkles, ChevronRight } from 'lucide-react';
 import { Branch } from '../types';
 
 interface BranchListScreenProps {
@@ -45,10 +45,12 @@ export const BranchListScreen: React.FC<BranchListScreenProps> = ({
             />
           </div>
 
-          <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+          {/* py-2 clears the tap-44 overlays: overflow-x-auto also clips the
+              vertical axis, so the row needs padding wider than the overlay. */}
+          <div className="flex gap-2 overflow-x-auto py-2 scrollbar-none">
             <button
               onClick={() => setFilterTag('all')}
-              className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-semibold transition-all ${
+              className={`tap-44 whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-semibold transition-all ${
                 filterTag === 'all'
                   ? 'bg-[#34562e] text-white shadow-sm'
                   : 'bg-[#eae7e7] text-[#42483f] hover:bg-[#e0e0db]'
@@ -58,7 +60,7 @@ export const BranchListScreen: React.FC<BranchListScreenProps> = ({
             </button>
             <button
               onClick={() => setFilterTag('near')}
-              className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-semibold transition-all ${
+              className={`tap-44 whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-semibold transition-all ${
                 filterTag === 'near'
                   ? 'bg-[#34562e] text-white shadow-sm'
                   : 'bg-[#eae7e7] text-[#42483f] hover:bg-[#e0e0db]'
@@ -68,7 +70,7 @@ export const BranchListScreen: React.FC<BranchListScreenProps> = ({
             </button>
             <button
               onClick={() => setFilterTag('popular')}
-              className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-semibold transition-all ${
+              className={`tap-44 whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-semibold transition-all ${
                 filterTag === 'popular'
                   ? 'bg-[#34562e] text-white shadow-sm'
                   : 'bg-[#eae7e7] text-[#42483f] hover:bg-[#e0e0db]'
@@ -78,7 +80,7 @@ export const BranchListScreen: React.FC<BranchListScreenProps> = ({
             </button>
             <button
               onClick={() => setFilterTag('top')}
-              className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-semibold transition-all ${
+              className={`tap-44 whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-semibold transition-all ${
                 filterTag === 'top'
                   ? 'bg-[#34562e] text-white shadow-sm'
                   : 'bg-[#eae7e7] text-[#42483f] hover:bg-[#e0e0db]'

@@ -1,26 +1,68 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
+import { AlertCircle, RefreshCw } from 'lucide-react';
 import { TopAppBar } from './components/TopAppBar';
 import { BottomNavBar, TabType } from './components/BottomNavBar';
 import { BranchListScreen } from './components/BranchListScreen';
 import { BranchDetailScreen } from './components/BranchDetailScreen';
 import { MenuScreen } from './components/MenuScreen';
 import { ItemModifierModal } from './components/ItemModifierModal';
-import { CartScreen } from './components/CartScreen';
-import { CheckoutScreen } from './components/CheckoutScreen';
-import { OrderSummaryScreen } from './components/OrderSummaryScreen';
-import { EsbEngineModal } from './components/EsbEngineModal';
 import {
   Branch,
   BranchPaymentInfo,
   OrderMode,
   SalesMode,
   MenuItem,
-  Category,
   CartItem,
   CartModifier,
   VoucherDeal,
   Order,
+  HistoryIdentity,
 } from './types';
+
+// The three screens at the end of the funnel. Every visitor loads the branch
+// list; far fewer reach checkout, and each of these is entered through an
+// explicit tap that gives the chunk time to arrive. ItemModifierModal is
+// deliberately NOT here — it opens on the single most-tapped control in the
+// app, where a network hop would be felt.
+const HistoryScreen = lazy(() => import('./components/HistoryScreen').then(m => ({ default: m.HistoryScreen })));
+const CartScreen = lazy(() => import('./components/CartScreen').then(m => ({ default: m.CartScreen })));
+const CheckoutScreen = lazy(() => import('./components/CheckoutScreen').then(m => ({ default: m.CheckoutScreen })));
+const OrderSummaryScreen = lazy(() => import('./components/OrderSummaryScreen').then(m => ({ default: m.OrderSummaryScreen })));
+
+// Stable identity: a fresh [] on every render would break memoisation in every
+// child that takes orderModes as a dependency.
+const NO_ORDER_MODES: OrderMode[] = [];
+
+// ESB names its order modes dineIn/takeAway/delivery; this app's SalesMode is
+// snake_case. Anything else ESB returns (it also emits "custom") passes through.
+const ESB_MODE_TO_SALES_MODE: Record<string, string> = {
+  dineIn: 'dine_in',
+  takeAway: 'takeaway',
+  delivery: 'delivery',
+};
+const toSalesMode = (esbType: string): SalesMode => ESB_MODE_TO_SALES_MODE[esbType] || esbType;
+
+// There is no login in this app, so the Account tab remembers who ordered on
+// this device and uses that to look up history. Deliberately localStorage and
+// not sessionStorage: the point is to still be there on the next visit.
+const IDENTITY_KEY = 'matchaman:identity';
+
+function readIdentity(): HistoryIdentity | null {
+  try {
+    const raw = localStorage.getItem(IDENTITY_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.fullName && parsed?.email ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+const ScreenFallback = (
+  <div className="flex min-h-screen items-center justify-center">
+    <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-[#eae7e7] border-t-[#34562e]"></div>
+  </div>
+);
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('branches');
@@ -28,56 +70,104 @@ export default function App() {
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
   const [salesMode, setSalesMode] = useState<SalesMode>('dine_in');
 
-  const [categories, setCategories] = useState<Category[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+
+  const categories = useMemo(() => {
+    const seen = new Set<string>();
+    return menuItems
+      .filter((item) => {
+        if (seen.has(item.categoryId)) return false;
+        seen.add(item.categoryId);
+        return true;
+      })
+      .map((item) => ({ id: item.categoryId, name: item.categoryName }));
+  }, [menuItems]);
 
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [appliedVoucher, setAppliedVoucher] = useState<VoucherDeal | null>(null);
   const [activeOrder, setActiveOrder] = useState<Order | null>(null);
 
   const [modifierModalItem, setModifierModalItem] = useState<MenuItem | null>(null);
-  const [showEsbModal, setShowEsbModal] = useState(false);
-  const [esbMode, setEsbMode] = useState('LIVE');
   const [loading, setLoading] = useState(true);
-  const [branchPaymentInfo, setBranchPaymentInfo] = useState<BranchPaymentInfo | null>(null);
-  const [branchOrderModes, setBranchOrderModes] = useState<OrderMode[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Kept as one branch-keyed record rather than two loose pieces of state, so
+  // the menu effect below can tell "not loaded yet" apart from "loaded, but for
+  // the branch we just navigated away from".
+  const [branchDetail, setBranchDetail] = useState<{
+    branchId: string;
+    payment: BranchPaymentInfo | null;
+    modes: OrderMode[];
+  } | null>(null);
+  const branchPaymentInfo = branchDetail?.payment ?? null;
+  const branchOrderModes = branchDetail?.modes ?? NO_ORDER_MODES;
+
+  const [historyIdentity, setHistoryIdentity] = useState<HistoryIdentity | null>(readIdentity);
+
+  const saveIdentity = useCallback((identity: HistoryIdentity) => {
+    setHistoryIdentity(identity);
+    try {
+      localStorage.setItem(IDENTITY_KEY, JSON.stringify(identity));
+    } catch {
+      // Private mode or a full quota — the tab still works for this session.
+    }
+  }, []);
+
+  const [availableDeals, setAvailableDeals] = useState<VoucherDeal[]>([]);
+  const [showMenuSearch, setShowMenuSearch] = useState(false);
 
   // Load branches from ESB API on boot
-  useEffect(() => {
-    async function loadBranches() {
-      try {
-        const configRes = await fetch('/api/esb/config');
-        const configData = await configRes.json();
-        setEsbMode(configData.mode === 'LIVE_API' ? 'LIVE' : 'SANDBOX');
+  const loadBranches = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const outletsRes = await fetch('/api/esb/outlets');
+      const outletsData = await outletsRes.json();
 
-        const outletsRes = await fetch('/api/esb/outlets');
-        const outletsData = await outletsRes.json();
-        if (outletsData.success && outletsData.data.length > 0) {
-          const mappedBranches: Branch[] = outletsData.data.map((o: any) => ({
-            id: o.outlet_id,
-            name: o.outlet_name,
-            address: o.address,
-            distanceKm: o.distance_km || 0,
-            isOpen: o.is_open,
-            imageUrl: o.image_url,
-            hours: o.operating_hours || '08:00 AM - 11:00 PM',
-            prepTime: o.prep_time_minutes || '10 - 15 mins',
-            lat: o.lat,
-            lng: o.lng,
-          }));
-          setBranches(mappedBranches);
-          if (mappedBranches.length > 0) {
-            setSelectedBranch(mappedBranches[0]);
-          }
-        }
-      } catch (err) {
-        console.error('Failed to load branches:', err);
-      } finally {
-        setLoading(false);
+      if (!outletsData.success) {
+        setLoadError(outletsData.error || 'Gagal memuat daftar cabang.');
+        return;
       }
+
+      const mappedBranches: Branch[] = (outletsData.data || []).map((o: any) => ({
+        id: o.outlet_id,
+        name: o.outlet_name,
+        address: o.address,
+        distanceKm: o.distance_km || 0,
+        isOpen: o.is_open,
+        imageUrl: o.image_url,
+        hours: o.operating_hours || '08:00 AM - 11:00 PM',
+        prepTime: o.prep_time_minutes || '10 - 15 mins',
+        lat: o.lat,
+        lng: o.lng,
+      }));
+
+      if (mappedBranches.length === 0) {
+        setLoadError('Belum ada cabang yang tersedia saat ini.');
+        return;
+      }
+
+      setBranches(mappedBranches);
+      setSelectedBranch(mappedBranches[0]);
+    } catch (err) {
+      console.error('Failed to load branches:', err);
+      setLoadError('Tidak dapat menghubungi server. Periksa koneksi kamu lalu coba lagi.');
+    } finally {
+      setLoading(false);
     }
-    loadBranches();
   }, []);
+
+  useEffect(() => {
+    loadBranches();
+  }, [loadBranches]);
+
+  // Remember who ordered, so the Account tab can pull their history without a
+  // login. Keyed off activeOrder rather than the checkout callback so it also
+  // covers an order restored after the payment-gateway redirect.
+  useEffect(() => {
+    const info = activeOrder?.customerInfo;
+    if (!info?.fullName || !info?.email) return;
+    saveIdentity({ fullName: info.fullName, email: info.email, phone: info.phone });
+  }, [activeOrder, saveIdentity]);
 
   // Restore pending order from sessionStorage (after payment redirect)
   useEffect(() => {
@@ -94,75 +184,173 @@ export default function App() {
     }
   }, []);
 
-  // Load menu when branch is selected
+  // Branch detail: payment info + order modes. Depends on the branch only —
+  // switching sales mode used to refetch this too, for a response that cannot
+  // differ.
   useEffect(() => {
     if (!selectedBranch) return;
+    const branch = selectedBranch;
+    let cancelled = false;
 
-    async function loadMenu() {
+    (async () => {
       try {
-        const menuRes = await fetch(`/api/esb/menu?branchCode=${selectedBranch!.id}`);
-        const menuData = await menuRes.json();
-        if (menuData.success) {
-          const mappedCategories: Category[] = (menuData.data.categories || []).map((c: any) => ({
-            id: c.category_id || c.id || c.categoryID,
-            name: c.category_name || c.name || c.categoryName || 'Unknown',
-          }));
-          setCategories(mappedCategories);
-          const mappedItems: MenuItem[] = (menuData.data.items || []).map((i: any) => ({
-            id: i.item_id,
-            name: i.item_name,
-            price: i.price,
-            description: i.description,
-            categoryId: i.category_id,
-            categoryName: i.category_name,
-            imageUrl: i.image_url,
-            isPopular: i.is_popular,
-            isAvailable: i.is_available,
-            modifierGroups: i.modifier_groups?.map((mg: any) => ({
-              id: mg.group_id,
-              name: mg.group_name,
-              required: mg.is_required,
-              minQty: mg.min_qty ?? 0,
-              maxQty: mg.max_qty ?? 1,
-              options: mg.options.map((o: any) => ({
-                id: o.option_id,
-                name: o.option_name,
-                price: o.price,
-              })),
-            })),
-          }));
-          setMenuItems(mappedItems);
-        }
-      } catch (err) {
-        console.error('Failed to load menu:', err);
-      }
-    }
-    loadMenu();
-  }, [selectedBranch]);
-
-  // Load branch detail (payment info + order modes) when branch is selected
-  useEffect(() => {
-    if (!selectedBranch) return;
-
-    async function loadBranchDetail() {
-      try {
-        const res = await fetch(`/api/esb/outlets/${selectedBranch!.id}`);
+        const res = await fetch(`/api/esb/outlets/${branch.id}`);
         const data = await res.json();
-        if (data.success && data.data.payment) {
-          setBranchPaymentInfo(data.data.payment);
-        }
-        if (data.success && data.data.available_sales_modes) {
-          setBranchOrderModes(data.data.available_sales_modes);
-        }
+        if (cancelled) return;
+        setBranchDetail({
+          branchId: branch.id,
+          payment: data.success && data.data.payment ? data.data.payment : null,
+          modes: data.success && data.data.available_sales_modes ? data.data.available_sales_modes : [],
+        });
       } catch (err) {
         console.error('Failed to load branch detail:', err);
+        if (!cancelled) setBranchDetail({ branchId: branch.id, payment: null, modes: [] });
       }
-    }
-    loadBranchDetail();
+    })();
+
+    return () => { cancelled = true; };
   }, [selectedBranch]);
 
-  // Cart operations
-  const handleAddToCart = (
+  // Keep salesMode on a mode the branch actually offers.
+  //
+  // salesMode defaults to 'dine_in', but the branch auto-selected on boot need
+  // not support it — several ESB branches are delivery-only. Reaching the menu
+  // without passing through the branch-detail screen (Account -> "Lihat Menu",
+  // or the bottom nav) leaves the mismatch in place: the menu then loads under
+  // whichever mode the server fallback happens to pick, while checkout still
+  // submits orderType 'dineIn' and a visitPurposeID borrowed from a different
+  // mode. Reconcile as soon as the branch's real modes are known.
+  useEffect(() => {
+    if (!selectedBranch || branchDetail?.branchId !== selectedBranch.id) return;
+    const supported = branchDetail.modes.map((m) => toSalesMode(m.type));
+    if (supported.length === 0 || supported.includes(salesMode)) return;
+    console.warn(
+      `[branch] ${selectedBranch.id} does not offer "${salesMode}"; switching to "${supported[0]}"`
+    );
+    setSalesMode(supported[0]);
+  }, [branchDetail, selectedBranch, salesMode]);
+
+  // Menu + promotions, which do depend on the sales mode. Gated on the detail
+  // belonging to this branch so it never runs with the previous branch's modes.
+  useEffect(() => {
+    if (!selectedBranch || branchDetail?.branchId !== selectedBranch.id) return;
+    const branch = selectedBranch;
+    const modes = branchDetail.modes;
+    let cancelled = false;
+
+    async function loadMenuAndPromotions() {
+      try {
+        // Step 2: determine visitPurposeID from the current salesMode
+        const mode = modes.find((m) => toSalesMode(m.type) === salesMode);
+        const visitPurposeID = mode?.visitPurposeID;
+
+        // Step 3 & 4: fetch promotions and menu in parallel
+        const menuUrl = visitPurposeID
+          ? `/api/esb/menu?branchCode=${branch.id}&visitPurposeID=${visitPurposeID}`
+          : `/api/esb/menu?branchCode=${branch.id}`;
+
+        const [promoResult, menuResult] = await Promise.all([
+          visitPurposeID
+            ? fetch('/api/esb/promotion', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ branchCode: branch.id, visitPurposeID }),
+              }).catch(() => null)
+            : Promise.resolve(null),
+          fetch(menuUrl).catch(() => null),
+        ]);
+
+        if (cancelled) return;
+
+        // Process promo result
+        if (promoResult && promoResult.ok) {
+          try {
+            const promoData = await promoResult.json();
+            if (promoData.success && Array.isArray(promoData.data)) {
+              setAvailableDeals(promoData.data.map((p: any) => ({
+                id: String(p.promotionID),
+                code: p.promotionCode || '',
+                title: p.notes || p.promotionCode || 'Promo',
+                description: p.notes || '',
+                discountType: p.promotionTypeID === 6
+                  ? 'fixed' as const
+                  : p.promotionTypeID === 5 || p.promotionTypeID === 10
+                    ? 'percentage' as const
+                    : 'fixed' as const,
+                discountValue: p.discount || 0,
+                minOrder: p.minSubtotal || 0,
+                badgeBg: '#4b6f44',
+                badgeTextColor: '#ffffff',
+              })));
+            }
+          } catch (e) {
+            console.error('Failed to parse promotions:', e);
+          }
+        }
+
+        // Process menu result
+        let menuLoaded = false;
+        if (menuResult && menuResult.ok) {
+          try {
+            const menuData = await menuResult.json();
+            if (menuData.success) {
+              const mappedItems: MenuItem[] = (menuData.data.items || []).map((i: any) => ({
+                id: i.item_id,
+                name: i.item_name,
+                price: i.price,
+                description: i.description,
+                categoryId: i.category_id,
+                categoryName: i.category_name,
+                imageUrl: i.image_url,
+                isPopular: i.is_popular,
+                isAvailable: i.is_available,
+                modifierGroups: i.modifier_groups?.map((mg: any) => ({
+                  id: mg.group_id,
+                  name: mg.group_name,
+                  required: mg.is_required,
+                  minQty: mg.min_qty ?? 0,
+                  maxQty: mg.max_qty ?? 1,
+                  options: mg.options.map((o: any) => ({
+                    id: o.option_id,
+                    name: o.option_name,
+                    price: o.price,
+                  })),
+                })),
+              }));
+              setMenuItems(mappedItems);
+              menuLoaded = true;
+            }
+          } catch (e) {
+            console.error('Failed to parse menu:', e);
+          }
+        }
+
+        // Never leave the previous branch's menu on screen under this branch's
+        // name. An empty menu is visibly wrong; someone else's menu is worse —
+        // adding those items produces an order carrying this branch's code with
+        // menuIDs that don't exist here.
+        if (!menuLoaded) {
+          console.error(`Menu could not be loaded for branch ${branch.id}`);
+          setMenuItems([]);
+        }
+      } catch (err) {
+        console.error('Failed to load menu or promotions:', err);
+        if (!cancelled) setMenuItems([]);
+      }
+    }
+    loadMenuAndPromotions();
+
+    // Switching branches fast would otherwise let an older response land last
+    // and paint the wrong branch's menu.
+    return () => { cancelled = true; };
+  }, [selectedBranch, salesMode, branchDetail]);
+
+  // Cart operations.
+  //
+  // These are useCallback'd because MenuScreen's item cards are React.memo'd —
+  // a fresh function identity on every render would defeat the memo and put all
+  // ~90 cards back into every re-render, which is what made holding + / - lag.
+  const handleAddToCart = useCallback((
     item: MenuItem,
     quantity: number,
     selectedModifiers: CartModifier[],
@@ -183,30 +371,38 @@ export default function App() {
     };
 
     setCartItems((prev) => [...prev, newItem]);
-  };
+  }, []);
 
-  const handleUpdateCartQty = (cartItemId: string, delta: number) => {
-    setCartItems((prev) =>
-      prev
+  const handleUpdateCartQty = useCallback((cartItemId: string, delta: number) => {
+    setCartItems((prev) => {
+      let changed = false;
+      const next = prev
         .map((ci) => {
-          if (ci.cartItemId === cartItemId) {
-            const nextQty = ci.quantity + delta;
-            if (nextQty <= 0) return null;
-            return {
-              ...ci,
-              quantity: nextQty,
-              totalPrice: ci.unitPrice * nextQty,
-            };
-          }
-          return ci;
+          if (ci.cartItemId !== cartItemId) return ci;
+          changed = true;
+          const nextQty = ci.quantity + delta;
+          if (nextQty <= 0) return null;
+          return {
+            ...ci,
+            quantity: nextQty,
+            totalPrice: ci.unitPrice * nextQty,
+          };
         })
-        .filter(Boolean) as CartItem[]
-    );
-  };
+        .filter(Boolean) as CartItem[];
+      // Same array back when nothing matched, so a stray tap on a line that has
+      // already gone doesn't push a pointless render through the whole tree.
+      return changed ? next : prev;
+    });
+  }, []);
 
-  const handleRemoveCartItem = (cartItemId: string) => {
+  const handleRemoveCartItem = useCallback((cartItemId: string) => {
     setCartItems((prev) => prev.filter((ci) => ci.cartItemId !== cartItemId));
-  };
+  }, []);
+
+  // Same reason as the cart handlers: these are props of the memoised menu
+  // cards, so they must not be inline arrows.
+  const openItemModal = useCallback((item: MenuItem) => setModifierModalItem(item), []);
+  const goToCart = useCallback(() => setActiveTab('cart'), []);
 
   // Header Title & Action Mapping
   const getHeaderProps = () => {
@@ -231,7 +427,10 @@ export default function App() {
           title: 'Matchaman',
           subtitle: selectedBranch?.name || '',
           showBack: true,
-          onBack: () => setActiveTab('branches'),
+          onBack: () => {
+            setCartItems([]);
+            setActiveTab('branches');
+          },
           actions: 'search' as const,
         };
       case 'cart':
@@ -288,7 +487,29 @@ export default function App() {
         </div>
       )}
 
-      {!loading && (
+      {/* Boot failure — without this the app renders an empty <main> forever */}
+      {!loading && loadError && (
+        <div className="flex min-h-screen items-center justify-center px-6">
+          <div className="max-w-sm text-center">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-[#ffdad6] text-[#93000a]">
+              <AlertCircle className="h-8 w-8" />
+            </div>
+            <h2 className="mt-4 font-serif text-xl font-bold text-[#1b1c1c]">
+              Gagal Memuat Cabang
+            </h2>
+            <p className="mt-2 text-sm text-[#5d5f5b]">{loadError}</p>
+            <button
+              onClick={loadBranches}
+              className="tap-44 mx-auto mt-6 flex h-12 items-center justify-center gap-2 rounded-xl bg-[#34562e] px-6 text-sm font-semibold text-white shadow-md transition-all active:scale-95 hover:bg-[#012202]"
+            >
+              <RefreshCw className="h-4 w-4" />
+              <span>Coba Lagi</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!loading && !loadError && (
         <>
           {/* Top Application Bar */}
           <TopAppBar
@@ -297,10 +518,12 @@ export default function App() {
         showBack={headerProps.showBack}
         onBack={headerProps.onBack}
         actions={headerProps.actions}
-        onSearchClick={() => setActiveTab('branches')}
-        onEsbStatusClick={() => setShowEsbModal(true)}
-        esbMode={esbMode}
-      />
+          onSearchClick={() => {
+            if (activeTab === 'menu') {
+              setShowMenuSearch((s) => !s);
+            }
+          }}
+        />
 
       {/* Main Screen Content */}
       <main className="min-h-[calc(100vh-3.5rem)]">
@@ -309,6 +532,7 @@ export default function App() {
             branches={branches}
             selectedBranch={selectedBranch ?? branches[0]}
             onSelectBranch={(branch) => {
+              setCartItems([]);
               setSelectedBranch(branch);
               setActiveTab('branch-detail');
             }}
@@ -330,73 +554,70 @@ export default function App() {
             categories={categories}
             menuItems={menuItems}
             cartItems={cartItems}
-            onOpenItemModal={(item) => setModifierModalItem(item)}
+            onOpenItemModal={openItemModal}
             onUpdateCartItemQty={handleUpdateCartQty}
-            onGoToCart={() => setActiveTab('cart')}
+            onGoToCart={goToCart}
             branchName={selectedBranch?.name || ''}
+            showSearch={showMenuSearch}
+            onCloseSearch={() => setShowMenuSearch(false)}
           />
         )}
 
         {activeTab === 'cart' && selectedBranch && (
-          <CartScreen
-            branch={selectedBranch}
-            salesMode={salesMode}
-            cartItems={cartItems}
-            availableDeals={[]}
-            appliedVoucher={appliedVoucher}
-            onApplyVoucher={(v) => setAppliedVoucher(v)}
-            onUpdateQty={handleUpdateCartQty}
-            onRemoveItem={handleRemoveCartItem}
-            onAddUpsell={() => {}}
-            upsellItem={null}
-            onProceedToCheckout={() => setActiveTab('checkout')}
-          />
+          <Suspense fallback={ScreenFallback}>
+            <CartScreen
+              branch={selectedBranch}
+              salesMode={salesMode}
+              cartItems={cartItems}
+              availableDeals={availableDeals}
+              appliedVoucher={appliedVoucher}
+              onApplyVoucher={(v) => setAppliedVoucher(v)}
+              onUpdateQty={handleUpdateCartQty}
+              onRemoveItem={handleRemoveCartItem}
+              onProceedToCheckout={() => setActiveTab('checkout')}
+            />
+          </Suspense>
         )}
 
         {activeTab === 'checkout' && selectedBranch && (
-          <CheckoutScreen
-            branch={selectedBranch}
-            salesMode={salesMode}
-            cartItems={cartItems}
-            appliedVoucher={appliedVoucher}
-            paymentInfo={branchPaymentInfo}
-            orderModes={branchOrderModes}
-            onOrderPlaced={(order) => {
-              setActiveOrder(order);
-              setCartItems([]);
-              setAppliedVoucher(null);
-              setActiveTab('order-summary');
-            }}
-            onBackToCart={() => setActiveTab('cart')}
-          />
+          <Suspense fallback={ScreenFallback}>
+            <CheckoutScreen
+              branch={selectedBranch}
+              salesMode={salesMode}
+              cartItems={cartItems}
+              appliedVoucher={appliedVoucher}
+              paymentInfo={branchPaymentInfo}
+              orderModes={branchOrderModes}
+              onOrderPlaced={(order) => {
+                setActiveOrder(order);
+                setCartItems([]);
+                setAppliedVoucher(null);
+                setActiveTab('order-summary');
+              }}
+            />
+          </Suspense>
         )}
 
         {activeTab === 'order-summary' && (
-          <OrderSummaryScreen
-            order={activeOrder}
-            onNewOrder={() => {
-              setActiveOrder(null);
-              setActiveTab('menu');
-            }}
-          />
+          <Suspense fallback={ScreenFallback}>
+            <OrderSummaryScreen
+              order={activeOrder}
+              onNewOrder={() => {
+                setActiveOrder(null);
+                setActiveTab('menu');
+              }}
+            />
+          </Suspense>
         )}
 
         {activeTab === 'account' && (
-          <div className="mx-auto max-w-xl px-4 py-12 text-center">
-            <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-[#34562e] text-white">
-              <span className="font-serif text-2xl font-bold">AR</span>
-            </div>
-            <h2 className="mt-4 font-serif text-xl font-bold">Andreas Rolando</h2>
-            <p className="text-xs text-[#5d5f5b]">andreas.rolando@esb.co.id</p>
-            <div className="mt-6 rounded-xl border border-[#eae7e7] bg-white p-4 text-left shadow-xs">
-              <h3 className="font-serif text-sm font-bold text-[#34562e]">
-                Matchaman Zen Loyalty Program
-              </h3>
-              <p className="mt-1 text-xs text-[#5d5f5b]">
-                Poin Kamu: <strong>1,240 Zen Points</strong> (Setara Rp 12.400)
-              </p>
-            </div>
-          </div>
+          <Suspense fallback={ScreenFallback}>
+            <HistoryScreen
+              identity={historyIdentity}
+              branchCode={selectedBranch?.id || branches[0]?.id || ''}
+              onBrowseMenu={() => setActiveTab('menu')}
+            />
+          </Suspense>
         )}
       </main>
 
@@ -405,12 +626,6 @@ export default function App() {
         item={modifierModalItem}
         onClose={() => setModifierModalItem(null)}
         onAddToCart={handleAddToCart}
-      />
-
-      {/* ESB ESO-QS Engine Status Modal */}
-      <EsbEngineModal
-        isOpen={showEsbModal}
-        onClose={() => setShowEsbModal(false)}
       />
 
       {/* Global Fixed Bottom Bar */}

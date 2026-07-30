@@ -188,7 +188,7 @@ export const BranchDetailScreen: React.FC<BranchDetailScreenProps> = ({
           <div className="absolute bottom-3 right-3 z-10">
             <button
               onClick={handleDirections}
-              className="flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-[#1b1c1c] shadow-md transition-all hover:bg-[#fcf9f8] active:scale-95"
+              className="tap-44 flex items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-semibold text-[#1b1c1c] shadow-md transition-all hover:bg-[#fcf9f8] active:scale-95"
             >
               <Navigation className="h-4 w-4 text-[#34562e]" />
               <span>Get Directions</span>
