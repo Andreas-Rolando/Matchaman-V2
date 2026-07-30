@@ -1,4 +1,4 @@
-import './env';
+import './env.js';
 import type { NextFunction, Request, Response } from 'express';
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';

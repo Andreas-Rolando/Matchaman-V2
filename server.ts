@@ -12,7 +12,7 @@
  */
 import path from 'path';
 import express from 'express';
-import app, { sweepExpired } from './server/app';
+import app, { sweepExpired } from './server/app.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const IS_PROD = process.env.NODE_ENV === 'production';

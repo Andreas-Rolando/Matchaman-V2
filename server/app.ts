@@ -1,8 +1,8 @@
-import './env';
+import './env.js';
 import express from 'express';
 import crypto from 'crypto';
 import helmet from 'helmet';
-import { createMemoryRateLimiter, createSharedRateLimiter, rateBuckets } from './ratelimit';
+import { createMemoryRateLimiter, createSharedRateLimiter, rateBuckets } from './ratelimit.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);

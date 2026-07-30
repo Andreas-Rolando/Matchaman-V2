@@ -30,7 +30,7 @@ let cachedApp: NodeHandler | null = null;
 
 async function loadApp(): Promise<NodeHandler> {
   if (!cachedApp) {
-    const mod = await import('../server/app');
+    const mod = await import('../server/app.js');
     cachedApp = (mod.default ?? mod) as unknown as NodeHandler;
   }
   return cachedApp;
