@@ -361,7 +361,14 @@ function validateOrderPayload(body: Record<string, any>): string | null {
 // one endpoint that proves the function is wired up without needing ESB
 // credentials to be set.
 app.get(['/healthz', '/api/healthz'], (_req, res) => {
-  res.json({ status: 'ok', uptime: Math.floor(process.uptime()) });
+  res.json({
+    status: 'ok',
+    uptime: Math.floor(process.uptime()),
+    // Which commit is actually serving. "Is the fix deployed?" has come up
+    // repeatedly, and asset hashes cannot answer it for server-only changes.
+    // Vercel injects this; it is the public repo's SHA, not a secret.
+    version: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || 'local',
+  });
 });
 
 // 1. Config check
