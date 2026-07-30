@@ -1,5 +1,5 @@
-import React from 'react';
-import { ArrowLeft, Share, Search, Map, MoreVertical } from 'lucide-react';
+import React, { useState } from 'react';
+import { ArrowLeft, Share, Search, Map, MoreVertical, Check } from 'lucide-react';
 
 interface TopAppBarProps {
   title: string;
@@ -12,7 +12,10 @@ interface TopAppBarProps {
 }
 
 export const TopAppBar: React.FC<TopAppBarProps> = ({
-  title = 'Matchaman',
+  // No brand default: the title is always supplied by the caller from ESB data,
+  // and falling back to a hardcoded name would quietly reintroduce exactly the
+  // thing this component is meant to stop showing.
+  title,
   subtitle,
   showBack = false,
   onBack,
@@ -20,6 +23,28 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
   onSearchClick,
   onMapClick,
 }) => {
+  const [shared, setShared] = useState(false);
+
+  // This used to pop an alert saying the link had been copied to the clipboard
+  // while copying nothing at all — it told the customer something that was not
+  // true. Now it actually shares, preferring the native sheet on mobile and
+  // falling back to the clipboard, and only confirms once something happened.
+  const handleShare = async () => {
+    const url = window.location.href;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, url });
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      setShared(true);
+      setTimeout(() => setShared(false), 2000);
+    } catch {
+      // Includes the user dismissing the native share sheet, which is not an
+      // error and must not be reported as success.
+    }
+  };
+
   return (
     <header className="sticky top-0 z-50 flex h-14 w-full items-center justify-between border-b border-[#eae7e7] bg-[#fcf9f8]/90 px-4 shadow-sm backdrop-blur-md transition-all">
       <div className="flex items-center gap-3">
@@ -55,11 +80,13 @@ export const TopAppBar: React.FC<TopAppBarProps> = ({
 
         {actions === 'share' && (
           <button
-            onClick={() => alert('Disalin ke clipboard: Matchaman Zen Cafe Branch')}
-            className="tap-44 flex h-9 w-9 items-center justify-center rounded-full text-[#5d5f5b] hover:bg-[#eae7e7]/60 active:scale-95"
-            aria-label="Bagikan"
+            onClick={handleShare}
+            className={`tap-44 flex h-9 w-9 items-center justify-center rounded-full transition-colors hover:bg-[#eae7e7]/60 active:scale-95 ${
+              shared ? 'text-[#34562e]' : 'text-[#5d5f5b]'
+            }`}
+            aria-label={shared ? 'Link disalin' : 'Bagikan'}
           >
-            <Share className="h-5 w-5" />
+            {shared ? <Check className="h-5 w-5" /> : <Share className="h-5 w-5" />}
           </button>
         )}
 

@@ -6,6 +6,8 @@ import { Order } from '../types';
 
 interface OrderSummaryScreenProps {
   order: Order | null;
+  /** From ESB, not a constant — this app is deployed per merchant. */
+  companyName: string;
   onNewOrder: () => void;
 }
 
@@ -32,6 +34,7 @@ function normalizeStatus(raw: unknown): PaymentStatus {
 
 export const OrderSummaryScreen: React.FC<OrderSummaryScreenProps> = ({
   order,
+  companyName,
   onNewOrder,
 }) => {
   const [copied, setCopied] = useState(false);
@@ -443,7 +446,7 @@ export const OrderSummaryScreen: React.FC<OrderSummaryScreenProps> = ({
 
       <footer className="mt-10 text-center">
         <p className="text-[11px] font-semibold uppercase tracking-widest text-[#5d5f5b]/70">
-          © 2026 Matchaman Zen Cafe • ESB ESO-QS Integration
+          {companyName ? `${companyName} • ` : ''}ESB ESO-QS Integration
         </p>
       </footer>
     </div>

@@ -70,6 +70,11 @@ export default function App() {
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
   const [salesMode, setSalesMode] = useState<SalesMode>('dine_in');
 
+  // Reported by ESB on the branch-list response. Nothing is hardcoded in the
+  // header, so this is the only thing standing between the app and a blank
+  // title bar — see headerTitle below for the fallback chain.
+  const [companyName, setCompanyName] = useState('');
+
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
 
   const categories = useMemo(() => {
@@ -128,6 +133,8 @@ export default function App() {
         return;
       }
 
+      setCompanyName(outletsData.company?.name || outletsData.company?.code || '');
+
       const mappedBranches: Branch[] = (outletsData.data || []).map((o: any) => ({
         id: o.outlet_id,
         name: o.outlet_name,
@@ -159,6 +166,12 @@ export default function App() {
   useEffect(() => {
     loadBranches();
   }, [loadBranches]);
+
+  // The browser tab carried the AI Studio scaffold name. Same rule as the
+  // header: the merchant's name is data, not a constant.
+  useEffect(() => {
+    if (companyName) document.title = companyName;
+  }, [companyName]);
 
   // Remember who ordered, so the Account tab can pull their history without a
   // login. Keyed off activeOrder rather than the checkout callback so it also
@@ -406,26 +419,35 @@ export default function App() {
 
   // Header Title & Action Mapping
   const getHeaderProps = () => {
+    // Nothing here is hardcoded to a brand. The branch list is the one screen
+    // that is not about a single outlet, so it carries the company; every
+    // branch-scoped screen carries the outlet the customer is actually in.
+    //
+    // Each falls back to the other rather than to an empty bar: the company
+    // name arrives with the branch list and a branch may not be chosen yet.
+    const company = companyName || selectedBranch?.name || '';
+    const branch = selectedBranch?.name || companyName || '';
+
     switch (activeTab) {
       case 'branches':
         return {
-          title: 'Matchaman',
+          title: company,
           subtitle: 'Cabang & Lokasi',
           showBack: false,
           actions: 'search' as const,
         };
       case 'branch-detail':
         return {
-          title: 'Matchaman',
-          subtitle: selectedBranch?.name || '',
+          title: branch,
+          subtitle: 'Detail Cabang',
           showBack: true,
           onBack: () => setActiveTab('branches'),
           actions: 'share' as const,
         };
       case 'menu':
         return {
-          title: 'Matchaman',
-          subtitle: selectedBranch?.name || '',
+          title: branch,
+          subtitle: 'Menu',
           showBack: true,
           onBack: () => {
             setCartItems([]);
@@ -435,7 +457,7 @@ export default function App() {
         };
       case 'cart':
         return {
-          title: 'Matchaman',
+          title: branch,
           subtitle: 'Your Cart',
           showBack: true,
           onBack: () => setActiveTab('menu'),
@@ -443,7 +465,7 @@ export default function App() {
         };
       case 'checkout':
         return {
-          title: 'Matchaman',
+          title: branch,
           subtitle: 'Checkout Order',
           showBack: true,
           onBack: () => setActiveTab('cart'),
@@ -451,21 +473,28 @@ export default function App() {
         };
       case 'order-summary':
         return {
-          title: 'Matchaman',
+          // The order's own branch, not the selected one. After the payment
+          // redirect the order is restored from sessionStorage while
+          // selectedBranch has reset to whichever branch the app auto-picked
+          // on boot — showing that one would name the wrong outlet on a
+          // receipt.
+          title: activeOrder?.branch?.name || branch,
           subtitle: 'Order Summary',
           showBack: false,
           actions: 'none' as const,
         };
       case 'account':
         return {
-          title: 'Matchaman',
-          subtitle: 'User Profile & Settings',
+          // Deliberately the company: order history spans every branch this
+          // customer has ordered from, so naming one outlet would be wrong.
+          title: company,
+          subtitle: 'Riwayat Pesanan',
           showBack: false,
           actions: 'none' as const,
         };
       default:
         return {
-          title: 'Matchaman',
+          title: company,
           showBack: false,
           actions: 'none' as const,
         };
@@ -602,6 +631,7 @@ export default function App() {
           <Suspense fallback={ScreenFallback}>
             <OrderSummaryScreen
               order={activeOrder}
+              companyName={companyName}
               onNewOrder={() => {
                 setActiveOrder(null);
                 setActiveTab('menu');

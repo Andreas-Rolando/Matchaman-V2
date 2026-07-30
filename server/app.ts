@@ -402,7 +402,19 @@ app.get('/api/esb/outlets', async (req, res) => {
       lng: b.longitude,
     }));
 
-    res.json({ success: true, code: 200, data: mappedData });
+    // The company is only reported here, at the top level of the branch list —
+    // branch detail carries companyCode but not the display name. Sent as a
+    // sibling of `data` rather than wrapped around it, so the existing array
+    // shape the client already consumes stays untouched.
+    res.json({
+      success: true,
+      code: 200,
+      company: {
+        code: result.companyCode || ESB_COMPANY_CODE,
+        name: result.companyName || '',
+      },
+      data: mappedData,
+    });
   } catch (err: any) {
     res.status(500).json({ success: false, error: sanitizeError(err, 'outlets') });
   }
