@@ -1088,6 +1088,22 @@ function respondLoopError(res: express.Response, err: unknown, context: string) 
 const loopLoginLimiter = createSharedRateLimiter(60000, 3, 'loop-login');
 
 /**
+ * Trade the OTP result for a member session token.
+ *
+ * get-status-otp does NOT return a usable bearer token — it returns an auth
+ * key, which the spec spells out on this endpoint's `authKey` field: "Auth Key
+ * from response accessToken in API Get Status OTP Whatsapp". Using that key
+ * directly as a bearer token gets you "Member not found", because it identifies
+ * a verified phone rather than a member.
+ */
+async function exchangeAuthKey(authKey: string): Promise<{ token: string; memberCode?: string; fullName?: string }> {
+  const result: any = await loopFetch('/app/auth/login', { method: 'POST', body: { authKey } });
+  const data = result?.data || {};
+  if (!data.accessToken) throw new Error('auth/login returned no accessToken');
+  return { token: data.accessToken, memberCode: data.memberCode, fullName: data.fullName };
+}
+
+/**
  * A redirect target Loop will accept, or nothing.
  *
  * Loop answers 500 — not a validation error — when redirectUrl is present but
@@ -1186,7 +1202,8 @@ app.get('/api/loop/login/status', async (req, res) => {
         console.warn(`[LOOP] unexpected phone status "${phoneStatus}" — treating as registered`);
       }
 
-      await createSession(res, { token: data.accessToken, phoneNumber });
+      const member = await exchangeAuthKey(data.accessToken);
+      await createSession(res, { ...member, phoneNumber });
       return res.json({ success: true, code: 200, data: { status: 'VERIFIED' } });
     }
 
@@ -1239,9 +1256,24 @@ app.post('/api/loop/register', async (req, res) => {
       },
     });
 
-    // register returns no token of its own, so the session uses the one the OTP
-    // already issued for this phone.
-    await createSession(res, { token: pending.token, phoneNumber: pending.phoneNumber });
+    // register returns no token of its own, so the auth key parked at
+    // verification is exchanged now — the same step the login path takes.
+    let member;
+    try {
+      member = await exchangeAuthKey(pending.token);
+    } catch (err) {
+      // The account exists at this point; only the sign-in half failed. Say so,
+      // rather than let it read as a failed registration and invite a duplicate
+      // attempt.
+      console.error('[LOOP ERROR] auth exchange after register:', err instanceof Error ? err.message : err);
+      await clearPendingRegistration(req, res);
+      return res.status(502).json({
+        success: false,
+        error: 'Pendaftaran berhasil, tetapi masuk otomatis gagal. Silakan login ulang.',
+      });
+    }
+
+    await createSession(res, { ...member, phoneNumber: pending.phoneNumber });
     await clearPendingRegistration(req, res);
 
     res.json({ success: true, code: 200 });
@@ -1255,7 +1287,19 @@ app.get('/api/loop/member', async (req, res) => {
     const session = await readSession(req);
     if (!session) return res.status(401).json({ success: false, error: 'Belum masuk sebagai member.' });
 
-    const result: any = await loopFetch('/app/member/identity', { memberToken: session.token });
+    let result: any;
+    try {
+      result = await loopFetch('/app/member/identity', { memberToken: session.token });
+    } catch (err) {
+      // Upstream no longer accepts this token. Drop the local session too,
+      // otherwise the cookie survives and every later visit repeats the same
+      // rejection with no way for the customer to get out of it.
+      if (err instanceof LoopError && (err.status === 401 || err.status === 403)) {
+        await destroySession(req, res);
+        return res.status(401).json({ success: false, error: 'Sesi member berakhir. Silakan masuk lagi.' });
+      }
+      throw err;
+    }
     const m = result?.data || {};
 
     res.json({
