@@ -19,15 +19,16 @@ const LOOP_TIMEOUT_MS = parseInt(process.env.LOOP_TIMEOUT_MS || '9000', 10);
 /**
  * Which path goes into the signature.
  *
- * The spec is ambiguous here and it is the single most likely reason for a
- * blanket 401. Its prose example signs `/app/auth/login`, but the Postman
- * reference implementation it also ships uses `pm.request.url.path`, which is
- * the FULL path — including the `/esb-loop-lite/api/web` prefix that the
- * staging base URL carries. The executable reference wins by default; this
- * switch exists so the other reading is one env var away rather than a code
- * change made while debugging.
+ * Only the endpoint path — `/app/auth/login`, not the `/esb-loop-lite/api/web`
+ * prefix the staging base URL carries. The spec is ambiguous on this (its prose
+ * example shows the endpoint path, while the Postman reference it also ships
+ * uses `pm.request.url.path`, which is the full one); confirmed against ESB as
+ * the endpoint path.
+ *
+ * The `full` escape hatch stays because getting this wrong produces a blanket
+ * 401 with no other symptom, and a env var beats editing code mid-debug.
  */
-const SIGN_PATH_MODE = process.env.LOOP_SIGN_PATH_MODE === 'endpoint' ? 'endpoint' : 'full';
+const SIGN_PATH_MODE = process.env.LOOP_SIGN_PATH_MODE === 'full' ? 'full' : 'endpoint';
 
 export const loopMissingCreds = [
   !CLIENT_ID && 'LOOP_CLIENT_ID',
@@ -58,10 +59,12 @@ export function hashRequestBody(rawBody: string): string {
   return crypto.createHash('sha256').update(normalized).digest('hex').toLowerCase();
 }
 
-/** Path as it appears in the string to sign, per SIGN_PATH_MODE. */
+/** Path as it appears in the string to sign, per SIGN_PATH_MODE. Query strings
+ *  are dropped — only the path is signed. */
 export function signedPath(endpointPath: string): string {
-  if (SIGN_PATH_MODE === 'endpoint') return endpointPath;
-  return new URL(`${LOOP_BASE}${endpointPath}`).pathname;
+  const pathOnly = endpointPath.split('?')[0];
+  if (SIGN_PATH_MODE === 'full') return new URL(`${LOOP_BASE}${pathOnly}`).pathname;
+  return pathOnly;
 }
 
 /**
