@@ -85,7 +85,7 @@ All routes are proxied; the ESB token never reaches the browser.
 
 | Route | Purpose |
 |---|---|
-| `GET /healthz` | Liveness. Reveals no configuration. |
+| `GET /api/healthz` | Liveness. Reveals no configuration, and needs no ESB credentials — the quickest check that the function is reachable at all. Also served at `/healthz` when self-hosting. |
 | `GET /api/esb/config` | Merchant code + engine identity |
 | `GET /api/esb/outlets` | Branch list |
 | `GET /api/esb/outlets/:outletId` | Branch detail: order modes, payment options, tax |

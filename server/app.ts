@@ -346,7 +346,13 @@ function validateOrderPayload(body: Record<string, any>): string | null {
 // ----------------------------------------------------
 
 // Liveness probe — deliberately reveals no configuration.
-app.get('/healthz', (_req, res) => {
+//
+// Registered under /api as well as at the root: on Vercel the function only
+// receives /api/*, so a bare /healthz never reaches this app and would be
+// answered by the SPA rewrite with index.html. /api/healthz is therefore the
+// one endpoint that proves the function is wired up without needing ESB
+// credentials to be set.
+app.get(['/healthz', '/api/healthz'], (_req, res) => {
   res.json({ status: 'ok', uptime: Math.floor(process.uptime()) });
 });
 
