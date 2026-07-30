@@ -13,12 +13,14 @@ src/                 React SPA (Tailwind v4, lazy-loaded cart/checkout/history/s
 server/app.ts        Every route; exports the Express app. No listen(), no Vite.
 server/ratelimit.ts  Redis-backed order limiter + in-memory general limiter
 server/env.ts        dotenv side-effect module, imported first
-api/[[...path]].ts   Vercel entry — `export default app`
+api/index.ts         Vercel entry — every /api/* is rewritten here
 server.ts            Dev / self-host entry: mounts Vite middleware, listens
 vercel.json          Build config, SPA rewrite, CSP headers
 ```
 
-Two entry points share one app. On Vercel, `api/[[...path]].ts` hands the request to Express with the original URL intact, so routing is identical in both. Locally, `server.ts` mounts Vite in middleware mode, which keeps dev and production on a single origin.
+Two entry points share one app. Locally, `server.ts` mounts Vite in middleware mode, which keeps dev and production on a single origin.
+
+On Vercel, `vercel.json` rewrites every `/api/*` request to `api/index.ts`, carrying the original path in a `__vpath` parameter that the entry restores onto `req.url` before handing off to Express. This is deliberately **not** a `[...catch-all]` filename: Vercel's `/api` directory registers each file as a function at its *literal* path, so `api/[...path].ts` is reachable only as the URL `/api/[...path]` — every real request misses it, falls through to the SPA rewrite, and comes back as `index.html`.
 
 Three things do not survive the serverless split unchanged, and are handled explicitly:
 

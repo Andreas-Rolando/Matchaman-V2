@@ -7,8 +7,11 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 
 const TOO_MANY = 'Terlalu banyak permintaan. Silakan coba lagi nanti.';
 
+// Defensive about `socket`: this runs inside a serverless handler where the
+// request object is not always a full Node IncomingMessage, and a TypeError
+// here would take down the whole invocation rather than one request.
 function clientIp(req: Request): string {
-  return req.ip || req.socket.remoteAddress || 'unknown';
+  return req.ip || req.socket?.remoteAddress || 'unknown';
 }
 
 function reject(req: Request, res: Response, resetAt: number, label: string) {
