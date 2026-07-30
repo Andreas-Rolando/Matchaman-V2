@@ -16,9 +16,11 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 
 export const SESSION_COOKIE = 'loop_sid';
 export const PENDING_COOKIE = 'loop_otp';
+export const PENDING_REG_COOKIE = 'loop_reg';
 
 const SESSION_PREFIX = 'loop:sess:';
 const PENDING_PREFIX = 'loop:otp:';
+const PENDING_REG_PREFIX = 'loop:reg:';
 
 /** Loop tokens are long-lived; this is the ceiling regardless of what it says. */
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -36,6 +38,19 @@ export interface PendingLogin {
   /** Signature from generate-otp, used to poll status. Never sent to the client. */
   signature: string;
   type: string;
+}
+
+/**
+ * A phone that passed WhatsApp verification but has no Loop member yet.
+ *
+ * The access token is already issued at this point, so it is parked here rather
+ * than handed out: there is no member to attach a session to until registration
+ * completes, and the token must not reach the browser in the meantime.
+ */
+export interface PendingRegistration {
+  token: string;
+  countryCode: string;
+  phoneNumber: string;
 }
 
 export const hasSessionStore = Boolean(redis);
@@ -73,30 +88,52 @@ function newId(): string {
 }
 
 // ----------------------------------------------------
-// Pending OTP attempt
+// Short-lived records, keyed by a cookie the browser cannot read
 // ----------------------------------------------------
 
-export async function startPendingLogin(res: Response, pending: PendingLogin): Promise<void> {
+async function putTemp(res: Response, cookie: string, prefix: string, value: unknown, ttl: number) {
   if (!redis) throw new Error('Session store unavailable');
   const id = newId();
-  await redis.set(`${PENDING_PREFIX}${id}`, JSON.stringify(pending), { ex: PENDING_TTL_SECONDS });
-  res.cookie(PENDING_COOKIE, id, cookieOptions(PENDING_TTL_SECONDS));
+  await redis.set(`${prefix}${id}`, JSON.stringify(value), { ex: ttl });
+  res.cookie(cookie, id, cookieOptions(ttl));
 }
 
-export async function readPendingLogin(req: Request): Promise<PendingLogin | null> {
+async function getTemp<T>(req: Request, cookie: string, prefix: string): Promise<T | null> {
   if (!redis) return null;
-  const id = readCookie(req, PENDING_COOKIE);
+  const id = readCookie(req, cookie);
   if (!id) return null;
-  const raw = await redis.get<PendingLogin | string>(`${PENDING_PREFIX}${id}`);
+  const raw = await redis.get<T | string>(`${prefix}${id}`);
   if (!raw) return null;
-  return typeof raw === 'string' ? (JSON.parse(raw) as PendingLogin) : raw;
+  return typeof raw === 'string' ? (JSON.parse(raw) as T) : raw;
 }
 
-export async function clearPendingLogin(req: Request, res: Response): Promise<void> {
-  const id = readCookie(req, PENDING_COOKIE);
-  if (id && redis) await redis.del(`${PENDING_PREFIX}${id}`);
-  res.clearCookie(PENDING_COOKIE, { path: '/' });
+async function delTemp(req: Request, res: Response, cookie: string, prefix: string) {
+  const id = readCookie(req, cookie);
+  if (id && redis) await redis.del(`${prefix}${id}`);
+  res.clearCookie(cookie, { path: '/' });
 }
+
+// Pending OTP attempt
+
+export const startPendingLogin = (res: Response, pending: PendingLogin) =>
+  putTemp(res, PENDING_COOKIE, PENDING_PREFIX, pending, PENDING_TTL_SECONDS);
+
+export const readPendingLogin = (req: Request) =>
+  getTemp<PendingLogin>(req, PENDING_COOKIE, PENDING_PREFIX);
+
+export const clearPendingLogin = (req: Request, res: Response) =>
+  delTemp(req, res, PENDING_COOKIE, PENDING_PREFIX);
+
+// Verified phone waiting to become a member
+
+export const startPendingRegistration = (res: Response, pending: PendingRegistration) =>
+  putTemp(res, PENDING_REG_COOKIE, PENDING_REG_PREFIX, pending, PENDING_TTL_SECONDS);
+
+export const readPendingRegistration = (req: Request) =>
+  getTemp<PendingRegistration>(req, PENDING_REG_COOKIE, PENDING_REG_PREFIX);
+
+export const clearPendingRegistration = (req: Request, res: Response) =>
+  delTemp(req, res, PENDING_REG_COOKIE, PENDING_REG_PREFIX);
 
 // ----------------------------------------------------
 // Member session

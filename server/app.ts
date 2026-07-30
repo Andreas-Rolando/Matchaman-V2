@@ -10,6 +10,9 @@ import {
   startPendingLogin,
   readPendingLogin,
   clearPendingLogin,
+  startPendingRegistration,
+  readPendingRegistration,
+  clearPendingRegistration,
   createSession,
   readSession,
   destroySession,
@@ -1151,11 +1154,39 @@ app.get('/api/loop/login/status', async (req, res) => {
     const status = String(data.status || 'PENDING').toUpperCase();
 
     if (status === 'VERIFIED' && data.accessToken) {
-      await createSession(res, {
-        token: data.accessToken,
-        phoneNumber: data.verifiedPhoneNumber,
-      });
       await clearPendingLogin(req, res);
+
+      // A verified phone is not the same as a member. Ask before assuming, or
+      // the customer lands on a member screen with nothing behind it.
+      const countryCode = data.countryCode || '+62';
+      const phoneNumber = data.verifiedPhoneNumber;
+
+      const check: any = await loopFetch('/app/auth/validate-phone-number', {
+        method: 'POST',
+        body: { countryCode, phoneNumber },
+      });
+      const phoneStatus = String(check?.data?.status || '').toUpperCase();
+
+      if (phoneStatus === 'NOT_REGISTERED') {
+        // Park the token: it exists already, but there is no member to hang a
+        // session on until registration goes through.
+        await startPendingRegistration(res, { token: data.accessToken, countryCode, phoneNumber });
+        return res.json({
+          success: true,
+          code: 200,
+          data: { status: 'NEEDS_REGISTRATION', country_code: countryCode, phone_number: phoneNumber },
+        });
+      }
+
+      if (phoneStatus !== 'REGISTERED') {
+        // IMPORT_MEMBER is the third documented value and the spec says nothing
+        // more about it. Treated as an existing member — sending someone who
+        // already exists to a registration form would be worse — but logged, so
+        // it is visible if it turns out to need its own path.
+        console.warn(`[LOOP] unexpected phone status "${phoneStatus}" — treating as registered`);
+      }
+
+      await createSession(res, { token: data.accessToken, phoneNumber });
       return res.json({ success: true, code: 200, data: { status: 'VERIFIED' } });
     }
 
@@ -1167,6 +1198,55 @@ app.get('/api/loop/login/status', async (req, res) => {
     res.json({ success: true, code: 200, data: { status } });
   } catch (err) {
     respondLoopError(res, err, 'cek status login');
+  }
+});
+
+app.post('/api/loop/register', async (req, res) => {
+  try {
+    const pending = await readPendingRegistration(req);
+    if (!pending) {
+      return res.status(400).json({
+        success: false,
+        error: 'Verifikasi nomor tidak ditemukan atau sudah kedaluwarsa. Ulangi login.',
+      });
+    }
+
+    const { firstName, lastName, password, referralCode } = req.body || {};
+
+    if (typeof firstName !== 'string' || firstName.trim().length < 1 || firstName.length > MAX_FIELD_LEN) {
+      return res.status(400).json({ success: false, error: 'Nama depan wajib diisi.' });
+    }
+    if (typeof lastName !== 'string' || lastName.trim().length < 1 || lastName.length > MAX_FIELD_LEN) {
+      return res.status(400).json({ success: false, error: 'Nama belakang wajib diisi.' });
+    }
+    if (typeof password !== 'string' || password.length < 8 || password.length > MAX_FIELD_LEN) {
+      return res.status(400).json({ success: false, error: 'Kata sandi minimal 8 karakter.' });
+    }
+
+    await loopFetch('/app/auth/register', {
+      method: 'POST',
+      body: {
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        // Straight from the verified record, never from the request body — the
+        // phone is the one thing here that has actually been proven.
+        countryCode: pending.countryCode,
+        phoneNumber: pending.phoneNumber,
+        password,
+        ...(typeof referralCode === 'string' && referralCode.trim()
+          ? { referralCodeReferrer: referralCode.trim() }
+          : {}),
+      },
+    });
+
+    // register returns no token of its own, so the session uses the one the OTP
+    // already issued for this phone.
+    await createSession(res, { token: pending.token, phoneNumber: pending.phoneNumber });
+    await clearPendingRegistration(req, res);
+
+    res.json({ success: true, code: 200 });
+  } catch (err) {
+    respondLoopError(res, err, 'daftar member');
   }
 });
 

@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { LoopMember, LoopReward } from '../types';
 
-type Phase = 'checking' | 'signed-out' | 'waiting' | 'signed-in';
+type Phase = 'checking' | 'signed-out' | 'waiting' | 'register' | 'signed-in';
 
 const POLL_INTERVAL_MS = 5000;
 // A WhatsApp verification nobody completes must not keep waking the function.
@@ -47,6 +47,10 @@ export const MemberPanel: React.FC = () => {
   const [busy, setBusy] = useState(false);
   const [otpUrl, setOtpUrl] = useState<string | null>(null);
   const [pollGaveUp, setPollGaveUp] = useState(false);
+
+  // Set when a verified phone turns out to have no member behind it.
+  const [verifiedPhone, setVerifiedPhone] = useState<string>('');
+  const [form, setForm] = useState({ firstName: '', lastName: '', password: '', referralCode: '' });
 
   const loadMemberAndRewards = useCallback(async (): Promise<boolean> => {
     const res = await fetch('/api/loop/member');
@@ -111,6 +115,30 @@ export const MemberPanel: React.FC = () => {
     }
   };
 
+  const submitRegistration = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/loop/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setError(data.error || 'Pendaftaran gagal.');
+        return;
+      }
+      const signedIn = await loadMemberAndRewards();
+      setPhase(signedIn ? 'signed-in' : 'signed-out');
+    } catch {
+      setError('Tidak dapat menghubungi server.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const logout = async () => {
     setBusy(true);
     try {
@@ -168,6 +196,14 @@ export const MemberPanel: React.FC = () => {
           const signedIn = await loadMemberAndRewards();
           if (cancelled) return;
           setPhase(signedIn ? 'signed-in' : 'signed-out');
+          return;
+        } else if (data.data?.status === 'NEEDS_REGISTRATION') {
+          // Phone proven, but no member yet — collect the rest rather than
+          // dropping the customer back at a login button that would just
+          // repeat the same WhatsApp round trip.
+          setVerifiedPhone(`${data.data.country_code || ''}${data.data.phone_number || ''}`);
+          setError(null);
+          setPhase('register');
           return;
         } else if (data.data?.status === 'EXPIRED') {
           setPollGaveUp(true);
@@ -281,6 +317,109 @@ export const MemberPanel: React.FC = () => {
           onClick={() => {
             setPhase('signed-out');
             setOtpUrl(null);
+            setError(null);
+          }}
+          className="mt-2 h-9 w-full text-xs font-semibold text-[#5d5f5b] active:scale-95"
+        >
+          Batal
+        </button>
+      </div>
+    );
+  }
+
+  if (phase === 'register') {
+    const input =
+      'mt-1 h-11 w-full rounded-lg border border-[#c2c8bc] bg-white px-3 text-xs outline-none focus:border-[#34562e] focus:ring-1 focus:ring-[#34562e]';
+    const canSubmit =
+      form.firstName.trim() && form.lastName.trim() && form.password.length >= 8 && !busy;
+
+    return (
+      <div className={card}>
+        <div className="flex items-start gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#c7f0bb]/40 text-[#245a0f]">
+            <Sparkles className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="font-serif text-base font-bold text-[#1b1c1c]">Daftar Member</h3>
+            <p className="mt-0.5 text-xs leading-relaxed text-[#5d5f5b]">
+              Nomor <strong>{verifiedPhone}</strong> sudah terverifikasi tapi belum terdaftar.
+              Lengkapi data di bawah untuk menjadi member.
+            </p>
+          </div>
+        </div>
+
+        {error && (
+          <div className="mt-3 flex items-start gap-2 rounded-xl bg-[#fff3e0] p-3 text-xs text-[#e65100]">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <form onSubmit={submitRegistration} className="mt-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-[#5d5f5b]">Nama Depan</label>
+              <input
+                type="text"
+                required
+                value={form.firstName}
+                onChange={(e) => setForm({ ...form, firstName: e.target.value })}
+                placeholder="Alya"
+                className={input}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-[#5d5f5b]">Nama Belakang</label>
+              <input
+                type="text"
+                required
+                value={form.lastName}
+                onChange={(e) => setForm({ ...form, lastName: e.target.value })}
+                placeholder="Pratama"
+                className={input}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-[#5d5f5b]">Kata Sandi</label>
+            <input
+              type="password"
+              required
+              minLength={8}
+              value={form.password}
+              onChange={(e) => setForm({ ...form, password: e.target.value })}
+              placeholder="Minimal 8 karakter"
+              className={input}
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-[#5d5f5b]">
+              Kode Referral <span className="text-[#8a8d86]">(opsional)</span>
+            </label>
+            <input
+              type="text"
+              value={form.referralCode}
+              onChange={(e) => setForm({ ...form, referralCode: e.target.value })}
+              placeholder="Kosongkan jika tidak ada"
+              className={input}
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#34562e] font-serif text-sm font-semibold text-white shadow-md transition-all active:scale-95 hover:bg-[#012202] disabled:opacity-60 disabled:active:scale-100"
+          >
+            {busy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            <span>Daftar Sekarang</span>
+          </button>
+        </form>
+
+        <button
+          onClick={() => {
+            setPhase('signed-out');
             setError(null);
           }}
           className="mt-2 h-9 w-full text-xs font-semibold text-[#5d5f5b] active:scale-95"
