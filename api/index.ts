@@ -1,5 +1,4 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import app from '../server/app';
 
 /**
  * Vercel serverless entry point.
@@ -19,7 +18,37 @@ import app from '../server/app';
  * as /api/index. When that parameter is absent the URL is left untouched, so
  * this keeps working if the platform ever passes the original path through.
  */
-export default function handler(req: IncomingMessage, res: ServerResponse) {
+type NodeHandler = (req: IncomingMessage, res: ServerResponse) => void;
+
+// Loaded once per instance and reused. Imported lazily rather than at module
+// scope so that a failure to load is reportable: an exception thrown while the
+// module graph is being evaluated surfaces only as an opaque
+// FUNCTION_INVOCATION_FAILED, with the actual cause visible nowhere the client
+// can reach. Vercel's own Express guidance calls this out — a swallowed error
+// leaves the function in an undefined state.
+let cachedApp: NodeHandler | null = null;
+
+async function loadApp(): Promise<NodeHandler> {
+  if (!cachedApp) {
+    const mod = await import('../server/app');
+    cachedApp = (mod.default ?? mod) as unknown as NodeHandler;
+  }
+  return cachedApp;
+}
+
+export default async function handler(req: IncomingMessage, res: ServerResponse) {
+  let app: NodeHandler;
+  try {
+    app = await loadApp();
+  } catch (err) {
+    const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    console.error('[BOOT FAILED]', err);
+    res.statusCode = 500;
+    res.setHeader('content-type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify({ success: false, error: 'Server gagal dimuat.', detail }));
+    return;
+  }
+
   const url = new URL(req.url || '/', 'http://localhost');
   const originalPath = url.searchParams.get('__vpath');
 
@@ -29,5 +58,5 @@ export default function handler(req: IncomingMessage, res: ServerResponse) {
   }
 
   // An Express app is itself an (req, res) handler.
-  return (app as unknown as (q: IncomingMessage, s: ServerResponse) => void)(req, res);
+  return app(req, res);
 }
