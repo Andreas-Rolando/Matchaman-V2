@@ -48,8 +48,7 @@ export const MemberPanel: React.FC = () => {
   const [otpUrl, setOtpUrl] = useState<string | null>(null);
   const [pollGaveUp, setPollGaveUp] = useState(false);
 
-  // Set when a verified phone turns out to have no member behind it.
-  const [verifiedPhone, setVerifiedPhone] = useState<string>('');
+  const [phone, setPhone] = useState('');
   const [form, setForm] = useState({ firstName: '', lastName: '', password: '', referralCode: '' });
 
   const loadMemberAndRewards = useCallback(async (): Promise<boolean> => {
@@ -91,6 +90,41 @@ export const MemberPanel: React.FC = () => {
     };
   }, [loadMemberAndRewards]);
 
+  /**
+   * Route on the number before touching the OTP.
+   *
+   * The WhatsApp login refuses a phone that is not a member yet — it answers
+   * "Member not found" and never yields a token — and that failure carries no
+   * phone number, so there would be nothing left to send anyone to a signup
+   * form with. Asking first is what makes the branch possible at all.
+   */
+  const checkPhone = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/loop/login/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phoneNumber: phone }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setError(data.error || 'Gagal memeriksa nomor.');
+        return;
+      }
+      if (data.data?.status === 'NOT_REGISTERED') {
+        setPhase('register');
+        return;
+      }
+      await startLogin();
+    } catch {
+      setError('Tidak dapat menghubungi server.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const startLogin = async () => {
     setBusy(true);
     setError(null);
@@ -123,15 +157,17 @@ export const MemberPanel: React.FC = () => {
       const res = await fetch('/api/loop/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, phoneNumber: phone }),
       });
       const data = await res.json();
       if (!data.success) {
         setError(data.error || 'Pendaftaran gagal.');
         return;
       }
-      const signedIn = await loadMemberAndRewards();
-      setPhase(signedIn ? 'signed-in' : 'signed-out');
+      // Registration issues no session — the number still has to be proven.
+      // Straight into the WhatsApp login, which works now that the member
+      // exists.
+      await startLogin();
     } catch {
       setError('Tidak dapat menghubungi server.');
     } finally {
@@ -197,14 +233,6 @@ export const MemberPanel: React.FC = () => {
           if (cancelled) return;
           setPhase(signedIn ? 'signed-in' : 'signed-out');
           return;
-        } else if (data.data?.status === 'NEEDS_REGISTRATION') {
-          // Phone proven, but no member yet — collect the rest rather than
-          // dropping the customer back at a login button that would just
-          // repeat the same WhatsApp round trip.
-          setVerifiedPhone(`${data.data.country_code || ''}${data.data.phone_number || ''}`);
-          setError(null);
-          setPhase('register');
-          return;
         } else if (data.data?.status === 'EXPIRED') {
           setPollGaveUp(true);
           setError('Verifikasi kedaluwarsa. Silakan mulai lagi.');
@@ -268,14 +296,32 @@ export const MemberPanel: React.FC = () => {
           </div>
         )}
 
-        <button
-          onClick={startLogin}
-          disabled={busy}
-          className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#34562e] font-serif text-sm font-semibold text-white shadow-md transition-all active:scale-95 hover:bg-[#012202] disabled:opacity-60 disabled:active:scale-100"
-        >
-          {busy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
-          <span>Masuk dengan WhatsApp</span>
-        </button>
+        <form onSubmit={checkPhone} className="mt-4">
+          <label className="block text-xs font-medium text-[#5d5f5b]">Nomor WhatsApp</label>
+          <div className="mt-1 flex items-center gap-2">
+            <span className="flex h-11 items-center rounded-lg border border-[#c2c8bc] bg-[#f0eded] px-3 text-xs font-semibold text-[#5d5f5b]">
+              +62
+            </span>
+            <input
+              type="tel"
+              required
+              inputMode="numeric"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="81234567890"
+              className="h-11 flex-1 rounded-lg border border-[#c2c8bc] bg-white px-3 text-xs outline-none focus:border-[#34562e] focus:ring-1 focus:ring-[#34562e]"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={busy || phone.replace(/\D/g, '').length < 8}
+            className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#34562e] font-serif text-sm font-semibold text-white shadow-md transition-all active:scale-95 hover:bg-[#012202] disabled:opacity-60 disabled:active:scale-100"
+          >
+            {busy ? <RefreshCw className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
+            <span>Lanjutkan</span>
+          </button>
+        </form>
       </div>
     );
   }
@@ -342,8 +388,8 @@ export const MemberPanel: React.FC = () => {
           <div className="min-w-0">
             <h3 className="font-serif text-base font-bold text-[#1b1c1c]">Daftar Member</h3>
             <p className="mt-0.5 text-xs leading-relaxed text-[#5d5f5b]">
-              Nomor <strong>{verifiedPhone}</strong> sudah terverifikasi tapi belum terdaftar.
-              Lengkapi data di bawah untuk menjadi member.
+              Nomor <strong>+62{phone.replace(/\D/g, '').replace(/^0+/, '')}</strong> belum
+              terdaftar. Lengkapi data di bawah, lalu verifikasi lewat WhatsApp.
             </p>
           </div>
         </div>

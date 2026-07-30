@@ -16,11 +16,9 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 
 export const SESSION_COOKIE = 'loop_sid';
 export const PENDING_COOKIE = 'loop_otp';
-export const PENDING_REG_COOKIE = 'loop_reg';
 
 const SESSION_PREFIX = 'loop:sess:';
 const PENDING_PREFIX = 'loop:otp:';
-const PENDING_REG_PREFIX = 'loop:reg:';
 
 /** Loop tokens are long-lived; this is the ceiling regardless of what it says. */
 const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -40,18 +38,6 @@ export interface PendingLogin {
   type: string;
 }
 
-/**
- * A phone that passed WhatsApp verification but has no Loop member yet.
- *
- * The access token is already issued at this point, so it is parked here rather
- * than handed out: there is no member to attach a session to until registration
- * completes, and the token must not reach the browser in the meantime.
- */
-export interface PendingRegistration {
-  token: string;
-  countryCode: string;
-  phoneNumber: string;
-}
 
 export const hasSessionStore = Boolean(redis);
 
@@ -124,16 +110,6 @@ export const readPendingLogin = (req: Request) =>
 export const clearPendingLogin = (req: Request, res: Response) =>
   delTemp(req, res, PENDING_COOKIE, PENDING_PREFIX);
 
-// Verified phone waiting to become a member
-
-export const startPendingRegistration = (res: Response, pending: PendingRegistration) =>
-  putTemp(res, PENDING_REG_COOKIE, PENDING_REG_PREFIX, pending, PENDING_TTL_SECONDS);
-
-export const readPendingRegistration = (req: Request) =>
-  getTemp<PendingRegistration>(req, PENDING_REG_COOKIE, PENDING_REG_PREFIX);
-
-export const clearPendingRegistration = (req: Request, res: Response) =>
-  delTemp(req, res, PENDING_REG_COOKIE, PENDING_REG_PREFIX);
 
 // ----------------------------------------------------
 // Member session

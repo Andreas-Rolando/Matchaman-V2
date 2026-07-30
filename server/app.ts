@@ -10,9 +10,6 @@ import {
   startPendingLogin,
   readPendingLogin,
   clearPendingLogin,
-  startPendingRegistration,
-  readPendingRegistration,
-  clearPendingRegistration,
   createSession,
   readSession,
   destroySession,
@@ -1133,6 +1130,57 @@ function redirectTarget(req: express.Request): string | undefined {
   return undefined;
 }
 
+/** Digits only, leading zero dropped — Loop wants 81234567890, not 081234567890. */
+function normalizePhone(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const digits = raw.replace(/\D/g, '').replace(/^0+/, '');
+  return digits.length >= 8 && digits.length <= 15 ? digits : null;
+}
+
+/**
+ * Is this number already a member?
+ *
+ * Asked before the OTP rather than after, because the WhatsApp login flow
+ * refuses a phone with no member behind it — get-status-otp answers
+ * "Member not found" and never yields the auth key. That failure carries no
+ * phone number, so there is nothing left to route on; the check has to happen
+ * while the number is still in hand.
+ */
+app.post('/api/loop/login/check', async (req, res) => {
+  try {
+    const phoneNumber = normalizePhone(req.body?.phoneNumber);
+    if (!phoneNumber) {
+      return res.status(400).json({ success: false, error: 'Nomor HP tidak valid.' });
+    }
+    const countryCode =
+      typeof req.body?.countryCode === 'string' && /^\+\d{1,4}$/.test(req.body.countryCode)
+        ? req.body.countryCode
+        : '+62';
+
+    const result: any = await loopFetch('/app/auth/validate-phone-number', {
+      method: 'POST',
+      body: { countryCode, phoneNumber },
+    });
+    const status = String(result?.data?.status || '').toUpperCase();
+
+    if (status !== 'REGISTERED' && status !== 'NOT_REGISTERED') {
+      // IMPORT_MEMBER is the third documented value, with no explanation
+      // anywhere. Treated as an existing member — sending someone who already
+      // exists to a signup form is the worse failure — but logged so it stays
+      // visible if it turns out to need its own path.
+      console.warn(`[LOOP] unexpected phone status "${status}" — treating as registered`);
+    }
+
+    res.json({
+      success: true,
+      code: 200,
+      data: { status: status === 'NOT_REGISTERED' ? 'NOT_REGISTERED' : 'REGISTERED', country_code: countryCode, phone_number: phoneNumber },
+    });
+  } catch (err) {
+    respondLoopError(res, err, 'cek nomor');
+  }
+});
+
 app.post('/api/loop/login/start', loopLoginLimiter, async (req, res) => {
   try {
     const redirectUrl = redirectTarget(req);
@@ -1178,39 +1226,8 @@ app.get('/api/loop/login/status', async (req, res) => {
 
     if (status === 'VERIFIED' && data.accessToken) {
       await clearPendingLogin(req, res);
-
-      // A verified phone is not the same as a member. Ask before assuming, or
-      // the customer lands on a member screen with nothing behind it.
-      const countryCode = data.countryCode || '+62';
-      const phoneNumber = data.verifiedPhoneNumber;
-
-      const check: any = await loopFetch('/app/auth/validate-phone-number', {
-        method: 'POST',
-        body: { countryCode, phoneNumber },
-      });
-      const phoneStatus = String(check?.data?.status || '').toUpperCase();
-
-      if (phoneStatus === 'NOT_REGISTERED') {
-        // Park the token: it exists already, but there is no member to hang a
-        // session on until registration goes through.
-        await startPendingRegistration(res, { token: data.accessToken, countryCode, phoneNumber });
-        return res.json({
-          success: true,
-          code: 200,
-          data: { status: 'NEEDS_REGISTRATION', country_code: countryCode, phone_number: phoneNumber },
-        });
-      }
-
-      if (phoneStatus !== 'REGISTERED') {
-        // IMPORT_MEMBER is the third documented value and the spec says nothing
-        // more about it. Treated as an existing member — sending someone who
-        // already exists to a registration form would be worse — but logged, so
-        // it is visible if it turns out to need its own path.
-        console.warn(`[LOOP] unexpected phone status "${phoneStatus}" — treating as registered`);
-      }
-
       const member = await exchangeAuthKey(data.accessToken);
-      await createSession(res, { ...member, phoneNumber });
+      await createSession(res, { ...member, phoneNumber: data.verifiedPhoneNumber });
       return res.json({ success: true, code: 200, data: { status: 'VERIFIED' } });
     }
 
@@ -1225,17 +1242,27 @@ app.get('/api/loop/login/status', async (req, res) => {
   }
 });
 
+/**
+ * Create a member.
+ *
+ * The phone comes from the request body and is NOT verified at this point.
+ * That is Loop's model, not a shortcut: /app/auth/register accepts no OTP,
+ * signature or verification field of any kind, and the WhatsApp flow cannot be
+ * run first because it refuses numbers that are not members yet. Ownership is
+ * proven on the login that follows, which is what actually issues a session.
+ */
 app.post('/api/loop/register', async (req, res) => {
   try {
-    const pending = await readPendingRegistration(req);
-    if (!pending) {
-      return res.status(400).json({
-        success: false,
-        error: 'Verifikasi nomor tidak ditemukan atau sudah kedaluwarsa. Ulangi login.',
-      });
-    }
-
     const { firstName, lastName, password, referralCode } = req.body || {};
+
+    const phoneNumber = normalizePhone(req.body?.phoneNumber);
+    if (!phoneNumber) {
+      return res.status(400).json({ success: false, error: 'Nomor HP tidak valid.' });
+    }
+    const countryCode =
+      typeof req.body?.countryCode === 'string' && /^\+\d{1,4}$/.test(req.body.countryCode)
+        ? req.body.countryCode
+        : '+62';
 
     if (typeof firstName !== 'string' || firstName.trim().length < 1 || firstName.length > MAX_FIELD_LEN) {
       return res.status(400).json({ success: false, error: 'Nama depan wajib diisi.' });
@@ -1252,10 +1279,8 @@ app.post('/api/loop/register', async (req, res) => {
       body: {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
-        // Straight from the verified record, never from the request body — the
-        // phone is the one thing here that has actually been proven.
-        countryCode: pending.countryCode,
-        phoneNumber: pending.phoneNumber,
+        countryCode,
+        phoneNumber,
         password,
         ...(typeof referralCode === 'string' && referralCode.trim()
           ? { referralCodeReferrer: referralCode.trim() }
@@ -1263,26 +1288,10 @@ app.post('/api/loop/register', async (req, res) => {
       },
     });
 
-    // register returns no token of its own, so the auth key parked at
-    // verification is exchanged now — the same step the login path takes.
-    let member;
-    try {
-      member = await exchangeAuthKey(pending.token);
-    } catch (err) {
-      // The account exists at this point; only the sign-in half failed. Say so,
-      // rather than let it read as a failed registration and invite a duplicate
-      // attempt.
-      console.error('[LOOP ERROR] auth exchange after register:', err instanceof Error ? err.message : err);
-      await clearPendingRegistration(req, res);
-      return res.status(502).json({
-        success: false,
-        error: 'Pendaftaran berhasil, tetapi masuk otomatis gagal. Silakan login ulang.',
-      });
-    }
-
-    await createSession(res, { ...member, phoneNumber: pending.phoneNumber });
-    await clearPendingRegistration(req, res);
-
+    // No session yet on purpose: register issues no token, and the number has
+    // not been proven to belong to whoever filled the form. The client goes
+    // straight into the WhatsApp login, which now works because the member
+    // exists — and that is where ownership actually gets established.
     res.json({ success: true, code: 200 });
   } catch (err) {
     respondLoopError(res, err, 'daftar member');
