@@ -24,6 +24,7 @@ import {
 // explicit tap that gives the chunk time to arrive. ItemModifierModal is
 // deliberately NOT here — it opens on the single most-tapped control in the
 // app, where a network hop would be felt.
+const MemberPanel = lazy(() => import('./components/MemberPanel').then(m => ({ default: m.MemberPanel })));
 const HistoryScreen = lazy(() => import('./components/HistoryScreen').then(m => ({ default: m.HistoryScreen })));
 const CartScreen = lazy(() => import('./components/CartScreen').then(m => ({ default: m.CartScreen })));
 const CheckoutScreen = lazy(() => import('./components/CheckoutScreen').then(m => ({ default: m.CheckoutScreen })));
@@ -636,6 +637,13 @@ export default function App() {
 
         {activeTab === 'account' && (
           <Suspense fallback={ScreenFallback}>
+            {/* Two independent identities on one screen: the Loop loyalty
+                member (opt-in, WhatsApp login) above, and order history keyed
+                to the last order on this device below. Someone who has never
+                joined the loyalty programme can still see their orders. */}
+            <div className="mx-auto max-w-2xl px-4 pt-6">
+              <MemberPanel />
+            </div>
             <HistoryScreen
               identity={historyIdentity}
               branchCode={selectedBranch?.id || branches[0]?.id || ''}

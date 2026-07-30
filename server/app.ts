@@ -3,6 +3,17 @@ import express from 'express';
 import crypto from 'crypto';
 import helmet from 'helmet';
 import { createMemoryRateLimiter, createSharedRateLimiter, rateBuckets } from './ratelimit.js';
+import { fetchWithTimeout as sharedFetchWithTimeout } from './http.js';
+import { loopFetch, LoopError, hasLoopCreds, loopMissingCreds } from './loop.js';
+import {
+  hasSessionStore,
+  startPendingLogin,
+  readPendingLogin,
+  clearPendingLogin,
+  createSession,
+  readSession,
+  destroySession,
+} from './session.js';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -153,16 +164,10 @@ function cacheSet(key: string, data: any, ttlMs: number = 30000) {
   cache.set(key, { data, expiry: Date.now() + ttlMs });
 }
 
-// Fetch with timeout
-async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = ESB_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, { ...options, signal: controller.signal });
-    return response;
-  } finally {
-    clearTimeout(timer);
-  }
+// Fetch with timeout. The implementation moved to ./http.js so the Loop client
+// shares it; this wrapper only pins the ESB default.
+function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = ESB_TIMEOUT_MS) {
+  return sharedFetchWithTimeout(url, options, timeoutMs);
 }
 
 // Anything interpolated into an upstream ESB URL path must match this first.
@@ -1013,6 +1018,210 @@ app.post('/api/esb/user/orders', async (req, res) => {
     }
     res.status(500).json({ success: false, error: sanitizeError(err, 'riwayat pesanan') });
   }
+});
+
+// ----------------------------------------------------
+// LOOP LOYALTY (member login, profile, rewards)
+// ----------------------------------------------------
+
+// Same shape as the ESB credential check above: complain once at boot, then
+// refuse only the routes that cannot work. Ordering keeps running.
+if (!hasLoopCreds) {
+  console.warn(
+    `[WARN] Missing ${loopMissingCreds.join(', ')} — /api/loop/* will return 503. Ordering is unaffected.`
+  );
+}
+
+// The WhatsApp message the customer must send unchanged, and the reply they get
+// back. Overridable because the wording is the merchant's, not ours.
+const LOOP_OTP_TYPE = process.env.LOOP_OTP_TYPE || 'FL';
+const LOOP_OTP_REQUEST_TEXT =
+  process.env.LOOP_OTP_REQUEST_TEXT || 'Saya ingin verifikasi nomor -\nJangan ubah pesan ini.';
+const LOOP_OTP_RESPONSE_TEXT =
+  process.env.LOOP_OTP_RESPONSE_TEXT ||
+  'Nomor Anda berhasil diverifikasi. Silakan kembali ke halaman pesanan untuk melanjutkan.';
+
+app.use('/api/loop', (_req, res, next) => {
+  if (!hasLoopCreds) {
+    return res.status(503).json({
+      success: false,
+      error: 'Fitur member sedang tidak tersedia. Konfigurasi server belum lengkap.',
+    });
+  }
+  if (!hasSessionStore) {
+    // Sessions live in Redis, so without it a login could succeed upstream and
+    // then have nowhere to be remembered — refuse up front instead.
+    return res.status(503).json({
+      success: false,
+      error: 'Fitur member sedang tidak tersedia. Penyimpanan sesi belum siap.',
+    });
+  }
+  next();
+});
+
+/** Maps a Loop failure onto a response, reusing the ESB rules: forward a 4xx
+ *  the customer can act on, keep 5xx opaque. */
+function respondLoopError(res: express.Response, err: unknown, context: string) {
+  if (err instanceof LoopError && err.status >= 400 && err.status < 500) {
+    let message = '';
+    try {
+      const parsed = JSON.parse(err.body);
+      message = parsed?.message || '';
+    } catch {
+      /* non-JSON body is not for the customer */
+    }
+    console.error(`[LOOP ERROR] ${context}: ${err.message}`);
+    return res.status(err.status).json({
+      success: false,
+      error: typeof message === 'string' && message.trim() ? message.trim().slice(0, 300) : `Permintaan ditolak (${context})`,
+    });
+  }
+  console.error(`[LOOP ERROR] ${context}:`, err instanceof Error ? err.message : err);
+  return res.status(500).json({ success: false, error: `Terjadi kesalahan: ${context}` });
+}
+
+// Tighter than the general limiter on purpose: every call sends a real WhatsApp
+// message, so this is the Loop equivalent of the order endpoints.
+const loopLoginLimiter = createSharedRateLimiter(60000, 3, 'loop-login');
+
+app.post('/api/loop/login/start', loopLoginLimiter, async (req, res) => {
+  try {
+    const result: any = await loopFetch('/app/whatsapp/generate-otp', {
+      method: 'POST',
+      body: {
+        requestText: LOOP_OTP_REQUEST_TEXT,
+        responseText: LOOP_OTP_RESPONSE_TEXT,
+        redirectUrl: process.env.APP_URL || `https://${req.headers.host}`,
+        type: LOOP_OTP_TYPE,
+      },
+    });
+
+    const data = result?.data || {};
+    if (!data.otpMessageUrl || !data.signature) {
+      throw new Error('generate-otp returned no otpMessageUrl/signature');
+    }
+
+    // The signature identifies the OTP attempt and stays server-side; the
+    // browser only gets a cookie pointing at it.
+    await startPendingLogin(res, { signature: data.signature, type: LOOP_OTP_TYPE });
+
+    res.json({ success: true, code: 200, data: { otp_message_url: data.otpMessageUrl } });
+  } catch (err) {
+    respondLoopError(res, err, 'mulai login');
+  }
+});
+
+app.get('/api/loop/login/status', async (req, res) => {
+  try {
+    const pending = await readPendingLogin(req);
+    if (!pending) {
+      return res.status(400).json({ success: false, error: 'Sesi login tidak ditemukan. Mulai ulang login.' });
+    }
+
+    const result: any = await loopFetch('/app/whatsapp/get-status-otp', {
+      method: 'POST',
+      body: { signature: pending.signature, type: pending.type },
+    });
+
+    const data = result?.data || {};
+    const status = String(data.status || 'PENDING').toUpperCase();
+
+    if (status === 'VERIFIED' && data.accessToken) {
+      await createSession(res, {
+        token: data.accessToken,
+        phoneNumber: data.verifiedPhoneNumber,
+      });
+      await clearPendingLogin(req, res);
+      return res.json({ success: true, code: 200, data: { status: 'VERIFIED' } });
+    }
+
+    if (status === 'EXPIRED') {
+      await clearPendingLogin(req, res);
+    }
+
+    // Never echo accessToken, even when it is present for another reason.
+    res.json({ success: true, code: 200, data: { status } });
+  } catch (err) {
+    respondLoopError(res, err, 'cek status login');
+  }
+});
+
+app.get('/api/loop/member', async (req, res) => {
+  try {
+    const session = await readSession(req);
+    if (!session) return res.status(401).json({ success: false, error: 'Belum masuk sebagai member.' });
+
+    const result: any = await loopFetch('/app/member/identity', { memberToken: session.token });
+    const m = result?.data || {};
+
+    res.json({
+      success: true,
+      code: 200,
+      data: {
+        member_id: m.memberID,
+        member_code: m.memberCode,
+        full_name: [m.firstName, m.lastName].filter(Boolean).join(' ').trim(),
+        image_url: m.imageUrl,
+        email: m.email,
+        phone_number: m.phoneNumber,
+        country_code: m.countryCode,
+        birth_date: m.birthDate,
+        join_date: m.joinDate,
+        gender: m.gender,
+        point_amount: m.pointAmount ?? 0,
+        referral_code: m.referralCode,
+        tier: m.tier ?? null,
+      },
+    });
+  } catch (err) {
+    respondLoopError(res, err, 'detail member');
+  }
+});
+
+app.get('/api/loop/rewards', async (req, res) => {
+  try {
+    const session = await readSession(req);
+    if (!session) return res.status(401).json({ success: false, error: 'Belum masuk sebagai member.' });
+
+    const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1);
+    const perPage = Math.min(50, Math.max(1, parseInt(String(req.query.perPage ?? '20'), 10) || 20));
+
+    const result: any = await loopFetch(`/app/reward?page=${page}&perPage=${perPage}`, {
+      memberToken: session.token,
+    });
+
+    const rewards = (result?.data || []).map((r: any) => ({
+      reward_id: r.rewardID,
+      reward_code: r.rewardCode,
+      reward_name: r.rewardName,
+      image_url: r.imageUrl,
+      point_cost: r.pointCost ?? 0,
+      discount_amount: r.discountAmount ?? 0,
+      end_date: r.endDate,
+      stock: r.rewardStock,
+      is_expired: r.flagExpired === 1,
+    }));
+
+    res.json({ success: true, code: 200, data: rewards });
+  } catch (err) {
+    respondLoopError(res, err, 'daftar reward');
+  }
+});
+
+app.post('/api/loop/logout', async (req, res) => {
+  const session = await readSession(req);
+  // Best effort upstream: the local session must go regardless, otherwise a
+  // failed upstream logout would leave the customer stuck signed in.
+  if (session) {
+    try {
+      await loopFetch('/app/auth/logout', { method: 'POST', memberToken: session.token });
+    } catch (err) {
+      console.error('[LOOP ERROR] logout upstream:', err instanceof Error ? err.message : err);
+    }
+  }
+  await destroySession(req, res);
+  await clearPendingLogin(req, res);
+  res.json({ success: true, code: 200 });
 });
 
 // Unmatched API routes should stay JSON rather than fall through to index.html.

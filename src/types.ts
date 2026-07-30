@@ -180,6 +180,37 @@ export interface OrderHistoryPagination {
   per_page: number;
 }
 
+/** Member profile from ESB Loop (GET /app/member/identity), snake_cased by the
+ *  proxy to match the rest of this app's API surface. */
+export interface LoopMember {
+  member_id: number;
+  member_code: string;
+  full_name: string;
+  image_url?: string | null;
+  email?: string;
+  phone_number?: string;
+  country_code?: string;
+  birth_date?: string;
+  join_date?: string;
+  gender?: string;
+  point_amount: number;
+  referral_code?: string;
+  /** Shape is not pinned down in the Loop spec, so it is rendered defensively. */
+  tier?: unknown;
+}
+
+export interface LoopReward {
+  reward_id: number;
+  reward_code: string;
+  reward_name: string;
+  image_url?: string;
+  point_cost: number;
+  discount_amount: number;
+  end_date?: string;
+  stock?: number;
+  is_expired: boolean;
+}
+
 export interface Order {
   id: string;
   orderNumber: string;
